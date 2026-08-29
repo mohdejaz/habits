@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12141a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Budget">
+<title>Habit Budget</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="weeknav">
+    <button id="week-prev" class="icon-btn" aria-label="Previous week">‹</button>
+    <div class="weeklabel">
+      <span id="week-title">This week</span>
+      <span id="week-range" class="weekrange"></span>
+    </div>
+    <button id="week-next" class="icon-btn" aria-label="Next week">›</button>
+  </div>
+  <button id="open-settings" class="icon-btn" aria-label="Settings">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8m0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4"/><path fill="currentColor" d="m19.4 13-.1-1 .1-1 1.7-1.3a.9.9 0 0 0 .2-1.1l-1.7-2.9a.9.9 0 0 0-1-.4l-2 .8a7 7 0 0 0-1.8-1l-.3-2.1a.9.9 0 0 0-.9-.7h-3.4a.9.9 0 0 0-.9.7l-.3 2.1a7 7 0 0 0-1.7 1l-2-.8a.9.9 0 0 0-1.1.4L2.7 8.6a.9.9 0 0 0 .2 1.1L4.6 11l-.1 1 .1 1-1.7 1.3a.9.9 0 0 0-.2 1.1l1.7 2.9a.9.9 0 0 0 1 .4l2-.8q.8.6 1.8 1l.3 2.1a.9.9 0 0 0 .9.7h3.4a.9.9 0 0 0 .9-.7l.3-2.1a7 7 0 0 0 1.7-1l2 .8a.9.9 0 0 0 1.1-.4l1.7-2.9a.9.9 0 0 0-.2-1.1zm-2.1 4-1.8-.7-.8.6q-.6.4-1.4.7l-.9.3-.3 1.9h-1.8l-.3-1.9-.9-.3a5 5 0 0 1-1.4-.8l-.7-.5-1.8.7-.9-1.5 1.5-1.2-.1-.9-.1-.9.1-.9.1-.9-1.5-1.2.9-1.5 1.8.7.7-.5q.7-.5 1.4-.8l.9-.3.3-1.9h1.8l.3 1.9.9.3q.8.3 1.4.8l.7.5 1.8-.7.9 1.5-1.5 1.2.1.9.1.9-.1.9-.1.9 1.5 1.2z"/></svg>
+  </button>
+</header>
+
+<main id="habit-list" class="habits" aria-live="polite"></main>
+
+<div id="empty" class="empty" hidden>
+  <div class="empty-mark">◔</div>
+  <h2>No habits yet</h2>
+  <p>Add something you want to keep inside a weekly budget — screen time, cigarettes, money spent on takeaways.</p>
+  <button class="btn primary" data-action="add-habit">Add your first habit</button>
+</div>
+
+<button id="fab" class="fab" aria-label="Add habit">+</button>
+
+<!-- ---------- habit editor ---------- -->
+<dialog id="habit-dialog" class="sheet">
+  <form method="dialog" id="habit-form">
+    <div class="sheet-grip"></div>
+    <h2 id="habit-dialog-title">New habit</h2>
+
+    <label class="field">
+      <span>Name</span>
+      <input name="name" type="text" required maxlength="40" placeholder="Reading" autocomplete="off">
+    </label>
+
+    <fieldset class="field" id="kind-field">
+      <span>Track by</span>
+      <div class="segmented">
+        <label><input type="radio" name="kind" value="time" checked><span>Time</span></label>
+        <label><input type="radio" name="kind" value="count"><span>Count</span></label>
+        <label><input type="radio" name="kind" value="money"><span>Money</span></label>
+      </div>
+    </fieldset>
+
+    <label class="field" id="budget-field">
+      <span id="budget-label">Weekly budget (minutes)</span>
+      <input name="budget" type="number" inputmode="decimal" min="0" step="any" required placeholder="180">
+    </label>
+
+    <label class="field" id="unit-field" hidden>
+      <span>Unit name <em>(optional)</em></span>
+      <input name="unit" type="text" maxlength="16" placeholder="cups" autocomplete="off">
+    </label>
+
+    <fieldset class="field">
+      <span>Colour</span>
+      <div class="swatches" id="swatches"></div>
+    </fieldset>
+
+    <div class="sheet-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ---------- amount entry (money habits) ---------- -->
+<dialog id="amount-dialog" class="sheet">
+  <form method="dialog" id="amount-form">
+    <div class="sheet-grip"></div>
+    <h2 id="amount-title">Log spend</h2>
+    <label class="field">
+      <span id="amount-label">Amount</span>
+      <input name="amount" type="number" inputmode="decimal" step="any" required
+             placeholder="0.00" autocomplete="off">
+    </label>
+    <div class="quick" id="amount-quick"></div>
+    <p class="hint" id="amount-hint"></p>
+    <div class="sheet-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Add</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ---------- habit detail ---------- -->
+<dialog id="detail-dialog" class="sheet">
+  <div class="sheet-grip"></div>
+  <h2 id="detail-title">Habit</h2>
+  <p id="detail-summary" class="detail-summary"></p>
+  <div class="detail-tools">
+    <button class="btn ghost" data-action="edit-habit">Edit</button>
+    <button class="btn ghost" data-action="log-manual">Log manually</button>
+    <button class="btn ghost" data-action="hide-habit">Hide</button>
+    <button class="btn danger-ghost" data-action="delete-habit">Delete</button>
+  </div>
+  <h3 class="detail-heading">This week’s entries</h3>
+  <ul id="detail-entries" class="entries"></ul>
+  <div class="sheet-actions">
+    <button class="btn ghost" data-close>Done</button>
+  </div>
+</dialog>
+
+<!-- ---------- settings ---------- -->
+<dialog id="settings-dialog" class="sheet">
+  <div class="sheet-grip"></div>
+  <h2>Settings</h2>
+
+  <label class="field">
+    <span>Week starts on</span>
+    <select id="week-start-select">
+      <option value="1">Monday</option>
+      <option value="0">Sunday</option>
+      <option value="6">Saturday</option>
+    </select>
+  </label>
+
+  <fieldset class="field">
+    <span>Cards</span>
+    <div class="segmented" id="density">
+      <label><input type="radio" name="density" value="comfortable" checked><span>Comfortable</span></label>
+      <label><input type="radio" name="density" value="compact"><span>Compact</span></label>
+    </div>
+  </fieldset>
+
+  <label class="field">
+    <span>Currency</span>
+    <select id="currency-select"></select>
+    <p class="hint">Used by money habits. Changing it relabels existing amounts — it does not convert them.</p>
+  </label>
+
+  <div class="field">
+    <span>Backup</span>
+    <p class="hint">Everything lives in this browser only. Export now and then so a cleared cache or a new phone doesn’t take your history with it.</p>
+    <div class="row">
+      <button class="btn ghost" id="export-db">Export database</button>
+      <button class="btn ghost" id="import-db">Import database</button>
+    </div>
+    <input type="file" id="import-file" accept=".db,.sqlite,application/octet-stream" hidden>
+  </div>
+
+  <div class="field" id="hidden-field" hidden>
+    <span>Hidden habits</span>
+    <p class="hint">Hidden habits keep their history and stay out of the week view.</p>
+    <ul id="hidden-list" class="hidden-list"></ul>
+  </div>
+
+  <p class="hint" id="storage-note"></p>
+
+  <div class="sheet-actions">
+    <button class="btn ghost" data-close>Done</button>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="vendor/sql-wasm.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

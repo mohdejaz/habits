@@ -1,0 +1,42 @@
+# Publishes public/ to GitHub Pages. There is no build step — the workflow only
+# stamps the service worker cache name with the commit SHA so each deploy
+# invalidates the previous cache-first shell, then uploads the directory.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish; queue at most one more.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp service worker cache version
+        run: |
+          sed -i "s/^const CACHE = .*/const CACHE = 'habit-budget-${GITHUB_SHA::7}';/" public/sw.js
+          grep '^const CACHE' public/sw.js
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./public
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

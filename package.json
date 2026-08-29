@@ -1,0 +1,21 @@
+{
+  "name": "habit-budget",
+  "version": "1.0.0",
+  "description": "Offline PWA for tracking habits against a weekly budget of time or count.",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "icons": "node tools/make-icons.mjs",
+    "sync-sqljs": "cp node_modules/sql.js/dist/sql-wasm.js node_modules/sql.js/dist/sql-wasm.wasm public/vendor/",
+    "test": "node tools/e2e.mjs"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "sql.js": "^1.13.0"
+  },
+  "private": true,
+  "devDependencies": {
+    "puppeteer-core": "^25.9.0"
+  }
+}
