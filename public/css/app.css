@@ -79,13 +79,13 @@ body {
 
 /* ---------- habit cards ---------- */
 
-.habits { display: flex; flex-direction: column; gap: 12px; padding: 0 12px; }
+.habits { display: flex; flex-direction: column; gap: 10px; padding: 0 12px; }
 
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 16px 16px;
+  padding: 11px 14px 12px;
   position: relative;
   overflow: hidden;
 }
@@ -122,36 +122,36 @@ body {
 .card-name {
   flex: 1;
   margin: 0;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 620;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .card-more {
-  margin: -8px -8px -8px 0;
-  padding: 8px 10px;
+  margin: -6px -8px -6px 0;
+  padding: 6px 10px;
   border: 0;
   background: none;
   color: var(--muted);
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1;
   cursor: pointer;
 }
 
-.remaining { display: flex; align-items: baseline; gap: 6px; margin-top: 6px; }
+.remaining { display: flex; align-items: baseline; gap: 6px; margin-top: 3px; }
 .remaining .big {
-  font-size: 30px;
+  font-size: 25px;
   font-weight: 700;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
-.remaining .label { font-size: 13px; color: var(--muted); }
+.remaining .label { font-size: 12px; color: var(--muted); }
 .card.over .remaining .big { color: var(--danger); }
 
 .bar {
-  height: 6px;
-  margin: 10px 0 14px;
+  height: 5px;
+  margin: 8px 0 10px;
   border-radius: 99px;
   background: var(--surface-2);
   overflow: hidden;
@@ -167,11 +167,11 @@ body {
 
 /* ---------- controls ---------- */
 
-.controls { display: flex; align-items: center; gap: 10px; }
+.controls { display: flex; align-items: center; gap: 8px; }
 
 .btn {
-  min-height: 44px;
-  padding: 0 18px;
+  min-height: 44px;   /* the touch-target floor; compact opts out, this does not */
+  padding: 0 16px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface-2);
@@ -196,11 +196,11 @@ body {
 .card.running .timer-btn { background: var(--danger); border-color: var(--danger); }
 
 .elapsed {
-  font-size: 26px;
+  font-size: 23px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
-  min-width: 92px;
+  min-width: 84px;
 }
 .elapsed.idle { color: var(--muted); font-weight: 600; }
 .elapsed .dot {
@@ -226,7 +226,7 @@ body {
 .spent {
   flex: 0 1 auto;
   min-width: 0;
-  font-size: 24px;
+  font-size: 21px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
@@ -234,17 +234,17 @@ body {
   overflow: hidden;
 }
 .spent > span { display: block; overflow: hidden; text-overflow: ellipsis; }
-.spent small { display: block; font-size: 11px; font-weight: 500; color: var(--muted); }
+.spent small { display: block; font-size: 10px; font-weight: 500; color: var(--muted); }
 
-.stepper { display: flex; align-items: center; gap: 12px; width: 100%; }
+.stepper { display: flex; align-items: center; gap: 10px; width: 100%; }
 .step-btn {
   flex: 1;
-  height: 52px;
+  height: 46px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 13px;
   background: var(--surface-2);
   color: var(--text);
-  font-size: 26px;
+  font-size: 23px;
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
@@ -253,35 +253,37 @@ body {
 .step-btn:disabled { opacity: .35; }
 .step-btn:active { transform: scale(.96); }
 .tally {
-  min-width: 64px;
+  min-width: 58px;
   text-align: center;
-  font-size: 26px;
+  font-size: 23px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.tally small { display: block; font-size: 11px; font-weight: 500; color: var(--muted); }
+.tally small { display: block; font-size: 10px; font-weight: 500; color: var(--muted); }
 
 /* ---------- compact cards ---------- */
 /* Same card, tightened: nothing is dropped, so a habit can still be logged
-   without opening anything. */
+   without opening anything. Tap targets shrink below the 44px guideline here,
+   which is the trade the setting exists to make. */
 
-.habits.compact .card { padding: 10px 14px 12px; }
-.habits.compact .card-name { font-size: 15px; }
-.habits.compact .card-more { font-size: 16px; padding: 6px 8px; }
-.habits.compact .remaining { margin-top: 2px; }
-.habits.compact .remaining .big { font-size: 22px; }
-.habits.compact .remaining .label { font-size: 12px; }
-.habits.compact .bar { height: 5px; margin: 7px 0 10px; }
+.habits.compact { gap: 8px; }
+.habits.compact .card { padding: 7px 11px 8px; }
+.habits.compact .card-name { font-size: 14px; }
+.habits.compact .card-more { font-size: 15px; padding: 4px 8px; margin: -4px -8px -4px 0; }
+.habits.compact .remaining { margin-top: 0; gap: 5px; }
+.habits.compact .remaining .big { font-size: 19px; }
+.habits.compact .remaining .label { font-size: 11px; }
+.habits.compact .bar { height: 4px; margin: 5px 0 7px; }
 .habits.compact .controls,
-.habits.compact .stepper { gap: 8px; }
-.habits.compact .btn { min-height: 38px; padding: 0 14px; }
-.habits.compact .step-btn { height: 42px; font-size: 22px; border-radius: 12px; }
-.habits.compact .elapsed { font-size: 20px; min-width: 74px; }
+.habits.compact .stepper { gap: 6px; }
+.habits.compact .btn { min-height: 34px; padding: 0 12px; border-radius: 10px; font-size: 15px; }
+.habits.compact .step-btn { height: 36px; font-size: 20px; border-radius: 10px; }
+.habits.compact .elapsed { font-size: 17px; min-width: 62px; }
 .habits.compact .tally,
-.habits.compact .spent { font-size: 20px; }
-.habits.compact .tally { min-width: 52px; }
+.habits.compact .spent { font-size: 17px; }
+.habits.compact .tally { min-width: 44px; }
 .habits.compact .tally small,
-.habits.compact .spent small { font-size: 10px; }
+.habits.compact .spent small { font-size: 9px; }
 
 /* ---------- fab ---------- */
 
