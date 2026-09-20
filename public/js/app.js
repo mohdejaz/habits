@@ -27,7 +27,7 @@ let timers = new Map();  // habit_id -> started_at, for live ticking
 let days = [];           // the seven columns of the week on screen
 let todayIndex = -1;     // which column is today, or -1 on an earlier week
 let daySheet = null;     // { habitId, dayIndex } while the day sheet is open
-let suppressClick = false; // set by a finished drag, so it cannot also open a sheet
+let draggedAt = 0;       // when a reorder last finished, to swallow its trailing click
 let scrollLeft = 0;      // how far the habits are scrolled, kept across renders
 
 /* ---------- formatting ---------- */
@@ -346,13 +346,15 @@ grid.addEventListener('scroll', () => {
   if (!drag) scrollLeft = grid.scrollLeft;
 }, { passive: true });
 
+// Releasing a drag is followed by a click on a column this render has already
+// replaced, and that click must not also open a sheet. A time window rather
+// than a flag, because on touch the click may never arrive at all — the
+// element is gone before it fires — and a flag left standing would swallow the
+// next real tap instead.
+const CLICK_AFTER_DRAG_MS = 400;
+
 list.addEventListener('click', (event) => {
-  // A finished drag ends in a click on a row that has just been replaced. It
-  // must not also open a sheet.
-  if (suppressClick) {
-    suppressClick = false;
-    return;
-  }
+  if (Date.now() - draggedAt < CLICK_AFTER_DRAG_MS) return;
   const el = event.target.closest('.hcol');
   if (!el) return;
 
@@ -549,9 +551,7 @@ function endDrag(event) {
   const order = cols.map((c) => c._habit.id);
   order.splice(to, 0, ...order.splice(from, 1));
 
-  // The pointerup is followed by a click on a column this render is about to
-  // replace; without this it would also open the detail sheet.
-  suppressClick = true;
+  draggedAt = Date.now();
   // Where the grid is scrolled to is now the truth, not what the drag started
   // with: auto-scroll may have moved it.
   scrollLeft = grid.scrollLeft;

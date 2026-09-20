@@ -389,6 +389,26 @@ check('dragging left reorders', (await colNames()).join(',') === 'Takeaway,Coffe
 check('holding a cell never drags its column', (await colNames()).join(',') === 'Takeaway,Coffee,Reading', JSON.stringify(await colNames()));
 await page.evaluate(() => document.querySelector('#day-dialog')?.close());
 
+// The click a drag leaves behind is swallowed by a time window, not a flag: on
+// touch that click may never arrive, and a flag left standing would eat the
+// next real tap instead of its own.
+await dragCol(1, 2);
+await new Promise((r) => setTimeout(r, 450));
+await openCell(1, 0);
+check('a cell still opens on the first tap after a reorder',
+  await page.$eval('#day-dialog', (e) => e.open));
+await closeSheet();
+check('the reorder itself stuck', (await colNames()).join(',') === 'Coffee,Takeaway,Reading', JSON.stringify(await colNames()));
+// Put it back, so what follows starts from the order it expects.
+await dragCol(2, 1);
+check('restored for the rest of the suite', (await colNames()).join(',') === 'Takeaway,Coffee,Reading', JSON.stringify(await colNames()));
+
+// The handle must not offer itself to the compositor for sideways panning, or
+// a real finger scrolls the strip instead of dragging the column.
+check('the column handle reserves horizontal gestures for the drag',
+  (await page.$eval('.hcol-head', (e) => getComputedStyle(e).touchAction)) === 'pan-y',
+  await page.$eval('.hcol-head', (e) => getComputedStyle(e).touchAction));
+
 /* ---------- compact ---------- */
 
 const colWidth = () => page.$eval('.hcol:nth-child(1)', (e) => Math.round(e.getBoundingClientRect().width));

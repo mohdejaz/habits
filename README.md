@@ -103,7 +103,10 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   handle. Holding for 300ms is what separates a reorder from a scroll — moving
   before that cancels it, on either axis, since the habits scroll horizontally
   and the page scrolls vertically — and dragging to the edge of the strip
-  scrolls it. The order is stored in `habits.sort_order`, which is why hiding
+  scrolls it. `touch-action: pan-y` on the handle is load-bearing: without it
+  the compositor claims the sideways gesture, ignores `preventDefault`, and
+  fires `pointercancel` mid-drag. A synthesised mouse never reproduces that,
+  so no browser test will catch it — only a finger will. The order is stored in `habits.sort_order`, which is why hiding
   and unhiding a habit puts it back where it was rather than on the end.
 - **Hiding** a habit keeps every entry and only drops its column out of the week;
   Settings lists what is hidden and puts it back. A running timer is stopped and

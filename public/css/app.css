@@ -159,6 +159,12 @@ body {
 
 .hcol-head {
   height: var(--headh);
+  /* The handle refuses sideways panning, so the compositor never claims a
+     horizontal gesture here and the reorder drag gets to own it. Without this
+     a real finger scrolls the strip instead and the browser fires
+     pointercancel mid-drag — which a synthesised mouse never reproduces.
+     The strip still scrolls from the cells, which are most of its surface. */
+  touch-action: pan-y;
   display: flex;
   flex-direction: column;
   justify-content: center;
