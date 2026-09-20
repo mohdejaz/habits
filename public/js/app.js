@@ -84,6 +84,10 @@ function currencySymbol() {
 function formatAmount(habit, value) {
   if (habit.kind === 'time') return formatMinutes(value);
   if (habit.kind === 'money') return formatMoney(value);
+  if (habit.kind === 'bool') {
+    const n = Math.round(value);
+    return `${n} ${n === 1 ? 'day' : 'days'}`;
+  }
   const n = Math.round(value * 10) / 10;
   if (!habit.unit) return String(n);
   // "1 cups" reads badly; drop a plural 's' for exactly one.
@@ -95,12 +99,14 @@ function formatAmount(habit, value) {
 // reads "2 of 3 cups" rather than "2 cups of 3 cups".
 function formatBare(habit, value) {
   if (habit.kind === 'count') return String(Math.round(value * 10) / 10);
+  if (habit.kind === 'bool') return String(Math.round(value));
   return formatAmount(habit, value);
 }
 
 function formatBudget(habit) {
   if (habit.kind === 'time') return formatMinutes(habit.weekly_budget);
   if (habit.kind === 'money') return formatMoney(habit.weekly_budget);
+  if (habit.kind === 'bool') return formatAmount(habit, habit.weekly_budget);
   return `${habit.weekly_budget}${habit.unit ? ' ' + habit.unit : ''}`;
 }
 
@@ -119,6 +125,35 @@ function toast(message) {
   el.classList.add('show');
   clearTimeout(toast._t);
   toast._t = setTimeout(() => el.classList.remove('show'), 1900);
+}
+
+/* ---------- how a week is going ---------- */
+
+// Every other kind is a budget you stay under; a yes/no habit can also be a
+// target you climb to, and then "past the number" is the good outcome. This is
+// the only place that distinction lives, so nothing else has to think about it.
+function standing(habit, used) {
+  const slack = habit.kind === 'money' ? 0.005 : 0;
+  if (habit.at_least) {
+    const met = used >= habit.weekly_budget;
+    return {
+      met,
+      over: false,
+      // "to go" counts down to the target; once there, it stops counting.
+      text: met
+        ? `${formatBare(habit, used)} of ${formatBudget(habit)}`
+        : `${formatAmount(habit, habit.weekly_budget - used)} to go`,
+    };
+  }
+  const remaining = habit.weekly_budget - used;
+  const over = remaining < -slack;
+  return {
+    met: false,
+    over,
+    text: over
+      ? `${formatAmount(habit, -remaining)} over`
+      : `${formatAmount(habit, remaining)} left`,
+  };
 }
 
 /* ---------- rendering ---------- */
@@ -232,15 +267,13 @@ function tick() {
     el.classList.toggle('running', Boolean(startedAt));
 
     const used = el._days.reduce((a, b) => a + b, 0) + live;
-    const remaining = habit.weekly_budget - used;
     // Summing floats leaves dust, and a column must not go red over a
     // hundredth of a penny.
-    const over = habit.kind === 'money' ? remaining < -0.005 : remaining < 0;
-    el.classList.toggle('over', over);
+    const how = standing(habit, used);
+    el.classList.toggle('over', how.over);
+    el.classList.toggle('met', how.met);
 
-    $('[data-left]', el).textContent = over
-      ? `${formatAmount(habit, -remaining)} over`
-      : `${formatAmount(habit, remaining)} left`;
+    $('[data-left]', el).textContent = how.text;
     const pct = habit.weekly_budget > 0 ? Math.min(100, (used / habit.weekly_budget) * 100) : 0;
     $('[data-bar]', el).style.width = `${pct}%`;
 
@@ -256,8 +289,11 @@ function tick() {
       cell.classList.toggle('over', dayOver);
       cell.classList.toggle('ticking', Boolean(startedAt) && i === todayIndex);
       // The column is headed with the habit's name, so a count needs only its
-      // number; time and money carry their own unit and keep it.
-      cell.textContent = value > 0 ? formatBare(habit, value) : '';
+      // number; time and money carry their own unit and keep it. A yes/no day
+      // is a tick, which is the whole of what it has to say.
+      cell.textContent = value > 0
+        ? (habit.kind === 'bool' ? '✓' : formatBare(habit, value))
+        : '';
       cell.setAttribute('aria-label', cellLabel(habit, i, value));
     }
   }
@@ -267,6 +303,7 @@ function cellLabel(habit, index, value) {
   const when = days[index].start.toLocaleDateString(undefined, {
     weekday: 'long', day: 'numeric', month: 'long',
   });
+  if (habit.kind === 'bool') return `${habit.name}, ${when}, ${value > 0 ? 'yes' : 'no'}`;
   return `${habit.name}, ${when}, ${value > 0 ? formatAmount(habit, value) : 'nothing'} logged`;
 }
 
@@ -303,8 +340,12 @@ function trendLine(habit, series, weeks) {
   const born = weeks.findIndex((w) => w.endMs > habit.created_at);
   const firstReal = born < 0 ? weeks.length : born;
   const complete = series.slice(firstReal, series.length - 1);
+  // "The wrong side of the number" — past it for a cap, short of it for a
+  // target. The bar class stays `over` either way, because what it means on
+  // screen is the same: this week did not go well.
   const slack = habit.kind === 'money' ? 0.005 : 0;
-  const overWeeks = complete.filter((v) => v - habit.weekly_budget > slack).length;
+  const missed = (v) => (habit.at_least ? v < habit.weekly_budget : v - habit.weekly_budget > slack);
+  const badWeeks = complete.filter(missed).length;
   const average = complete.length
     ? complete.reduce((a, b) => a + b, 0) / complete.length
     : null;
@@ -317,7 +358,7 @@ function trendLine(habit, series, weeks) {
         'tbar',
         before ? 'before' : '',
         value <= 0 ? 'zero' : '',
-        !before && value - habit.weekly_budget > slack ? 'over' : '',
+        !before && missed(value) ? 'over' : '',
         week.offset === 0 ? 'now' : '',
         week.offset === weekOffset ? 'viewing' : '',
       ];
@@ -335,7 +376,7 @@ function trendLine(habit, series, weeks) {
       <span class="tline-name">${escapeHtml(habit.name)}</span>
       <span class="tline-stat">${average === null
         ? 'no full week yet'
-        : `avg ${escapeHtml(formatAmount(habit, average))}${overWeeks ? ` · over ${overWeeks}×` : ''}`}</span>
+        : `avg ${escapeHtml(formatAmount(habit, average))}${badWeeks ? ` · ${habit.at_least ? 'missed' : 'over'} ${badWeeks}×` : ''}`}</span>
     </div>
     <div class="tbars" style="--budget:${Math.min(100, (habit.weekly_budget / peak) * 100)}%">${bars}</div>`;
   return el;
@@ -379,7 +420,14 @@ list.addEventListener('click', (event) => {
   if (!el) return;
 
   const cell = event.target.closest('[data-cell]');
-  if (cell) return openDaySheet(el._habit, Number(cell.dataset.day));
+  if (cell) {
+    const habit = el._habit;
+    const dayIndex = Number(cell.dataset.day);
+    // Yes or no is the entire question, so asking it in a sheet would be one
+    // tap of ceremony for no answer.
+    if (habit.kind === 'bool') return toggleCell(habit, dayIndex);
+    return openDaySheet(habit, dayIndex);
+  }
   if (event.target.closest('[data-head]')) openDetail(el._habit.id);
 });
 
@@ -622,18 +670,31 @@ function buildSwatches() {
 
 function syncKindFields() {
   const kind = habitForm.kind.value;
+  const bool = kind === 'bool';
+
   $('#budget-label').textContent =
     kind === 'time' ? 'Weekly budget (minutes)'
       : kind === 'money' ? `Weekly budget (${currencySymbol()})`
-        : 'Weekly budget (how many)';
-  habitForm.budget.placeholder = kind === 'time' ? '180' : kind === 'money' ? '50' : '10';
+        : bool ? 'Days a week'
+          : 'Weekly budget (how many)';
+  habitForm.budget.placeholder =
+    kind === 'time' ? '180' : kind === 'money' ? '50' : bool ? '5' : '10';
+  // A yes/no day is one tick at most, so it cannot be capped any lower.
+  habitForm.budget.max = bool ? '7' : '';
+  habitForm.budget.step = bool ? '1' : 'any';
+
   $('#daily-label').innerHTML =
     (kind === 'time' ? 'Daily limit (minutes)'
       : kind === 'money' ? `Daily limit (${escapeHtml(currencySymbol())})`
         : 'Daily limit (how many)') + ' <em>(optional)</em>';
   habitForm.daily.placeholder = kind === 'time' ? '30' : kind === 'money' ? '10' : '2';
+
   // Only counts get a free-text unit; money is labelled by the currency.
   $('#unit-field').hidden = kind !== 'count';
+  // A daily limit on a yes/no habit could only ever be "one", which it is.
+  $('#daily-field').hidden = bool;
+  // Every other kind is a cap. Only yes/no habits are as often a target.
+  $('#goal-field').hidden = !bool;
 }
 
 habitForm.addEventListener('change', (e) => { if (e.target.name === 'kind') syncKindFields(); });
@@ -650,6 +711,8 @@ function openHabitEditor(habit = null) {
     habitForm.budget.value = habit.weekly_budget;
     habitForm.daily.value = habit.daily_limit ?? '';
     habitForm.unit.value = habit.unit || '';
+    const aim = habitForm.querySelector(`input[name=goal][value="${habit.at_least ? 1 : 0}"]`);
+    if (aim) aim.checked = true;
     const swatch = habitForm.querySelector(`input[name=color][value="${habit.color}"]`);
     if (swatch) swatch.checked = true;
   }
@@ -668,8 +731,15 @@ habitForm.addEventListener('submit', () => {
     dailyLimit: Number(data.get('daily')) > 0 ? Number(data.get('daily')) : null,
     unit: String(data.get('unit') || '').trim(),
     color: String(data.get('color') || COLORS[0]),
+    atLeast: Number(data.get('goal')) === 1 ? 1 : 0,
   };
   if (!values.name) return;
+  // A yes/no habit has no daily limit to set, and its week cannot run past
+  // seven days however the box was filled in.
+  if (values.kind === 'bool') {
+    values.dailyLimit = null;
+    values.weeklyBudget = Math.min(7, Math.round(values.weeklyBudget));
+  }
 
   if (editingId) store.updateHabit(editingId, values);
   else store.createHabit(values);
@@ -738,6 +808,21 @@ function paintDaySheet() {
   $('#day-tally').textContent = String(Math.round(used * 10) / 10);
   $('[data-act="day-dec"]', dayDialog).disabled = used <= 0;
 
+  // A running stopwatch has not written an entry yet, so it is not in here —
+  // stopping it is how that one comes off.
+  const entries = store.entriesForDay(habit.id, day);
+  const list = $('#day-entries');
+  list.hidden = entries.length === 0;
+  list.innerHTML = entries
+    .map((e) => `<li data-entry="${e.id}">
+      <span class="amt">${escapeHtml(formatAmount(habit, e.amount))}</span>
+      <span class="when">${escapeHtml(new Date(e.started_at).toLocaleTimeString(undefined, {
+        hour: 'numeric', minute: '2-digit',
+      }))}</span>
+      <button type="button" class="del" data-act="del-entry" aria-label="Remove this entry">✕</button>
+    </li>`)
+    .join('');
+
   const timerBtn = $('#day-timer');
   timerBtn.textContent = startedAt ? `Stop timer · ${formatClock(Date.now() - startedAt)}` : 'Start timer';
   timerBtn.classList.toggle('running', Boolean(startedAt));
@@ -758,6 +843,21 @@ function logToDay(habit, dayIndex, amount) {
     const whose = dayIndex === todayIndex ? "today's" : "that day's";
     toast(`Past ${whose} ${formatAmount(habit, habit.daily_limit)} limit`);
   }
+}
+
+// Same date rule as logToDay: today keeps the clock, any other day lands at
+// midday, out of reach of a DST shift.
+function toggleCell(habit, dayIndex) {
+  const day = days[dayIndex];
+  const d = day.start;
+  const when = dayIndex === todayIndex
+    ? Date.now()
+    : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12).getTime();
+
+  store.toggleDay(habit.id, day, when);
+  buzz(10);
+  render();
+  if (detailDialog.open) openDetail(habit.id);
 }
 
 dayDialog.addEventListener('click', (event) => {
@@ -782,6 +882,10 @@ dayDialog.addEventListener('click', (event) => {
       break;
     case 'day-dec':
       if (!store.decrementDay(habit.id, day)) return toast('Nothing logged that day');
+      buzz(10);
+      break;
+    case 'del-entry':
+      store.deleteEntry(Number(button.closest('[data-entry]').dataset.entry));
       buzz(10);
       break;
     case 'day-timer':

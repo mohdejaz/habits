@@ -208,6 +208,9 @@ body {
   cursor: pointer;
 }
 .hcol.over .hcol-head { border-top-color: var(--danger); }
+/* A target that has been reached. Only yes/no habits can be targets, and for
+   them this is the good end of the week rather than the bad one. */
+.hcol.met .hcol-head { border-top-color: var(--ok); }
 
 .hcol-name,
 .hcol-left {
@@ -223,6 +226,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .hcol.over .hcol-left { color: var(--danger); font-weight: 600; }
+.hcol.met .hcol-left { color: var(--ok); font-weight: 600; }
 
 .hcol-bar {
   display: block;
@@ -240,6 +244,7 @@ body {
   transition: width .25s ease;
 }
 .hcol.over .hcol-bar > i { background: var(--danger); }
+.hcol.met .hcol-bar > i { background: var(--ok); }
 
 /* ---------- day cells ---------- */
 
@@ -538,13 +543,16 @@ body {
 .segmented input { position: absolute; opacity: 0; pointer-events: none; }
 .segmented span {
   display: block;
-  padding: 10px 0;
+  padding: 10px 2px;
   border-radius: 9px;
   text-align: center;
   font-weight: 600;
   font-size: 15px;
   color: var(--muted);
+  white-space: nowrap;
 }
+/* Four kinds rather than three; "Yes/no" needs the room. */
+#kind-field .segmented span { font-size: 13.5px; }
 .segmented input:checked + span { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
 
 .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -628,6 +636,9 @@ body {
 .entries .amt { font-variant-numeric: tabular-nums; font-weight: 600; }
 .entries .del { border: 0; background: none; color: var(--muted); font-size: 17px; padding: 4px 2px; cursor: pointer; }
 .entries .none { color: var(--muted); border: 0; }
+/* In the day sheet the list is followed by the amount field, not by the
+   sheet's own actions, so it has to carry its own gap. */
+#day-entries { margin-bottom: 14px; }
 
 /* ---------- toast ---------- */
 

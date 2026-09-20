@@ -253,6 +253,41 @@ check('stopping logs the elapsed minutes into that day', await page.evaluate(asy
   return !store.runningTimers().has(id) && store.usedInWeek(id, store.weekRange(0)) > 0;
 }), JSON.stringify((await colState(1)).cells[today]));
 
+// Adding was never the hard part. Taking a mistake back off was: before the
+// day sheet listed the day's own entries, a time or money habit had no minus
+// at all, and the only way back was the week-wide list in the habit sheet.
+await openCell(1, today);
+const dayEntries = () => page.$$eval('#day-entries li', (ls) => ls.map((l) => l.querySelector('.amt').textContent));
+const logged = (await dayEntries()).length;
+check('the day sheet lists what is already on that day', logged === 1, JSON.stringify(await dayEntries()));
+
+await page.type('#day-form input[name=amount]', '30');
+await page.click('#day-form button[type=submit]');
+await page.waitForFunction(() => !document.querySelector('#day-dialog').open);
+const withExtra = await colState(1);
+await openCell(1, today);
+check('a second session appears alongside the first',
+  (await dayEntries()).length === 2 && (await dayEntries()).includes('30m'),
+  JSON.stringify(await dayEntries()));
+
+await page.evaluate(() => {
+  const li = [...document.querySelectorAll('#day-entries li')].find((l) => l.querySelector('.amt').textContent === '30m');
+  li.querySelector('.del').click();
+});
+await page.waitForFunction(() => document.querySelectorAll('#day-entries li').length === 1);
+check('removing one takes it off the day, not the week',
+  (await dayEntries()).length === 1 && !(await dayEntries()).includes('30m'),
+  JSON.stringify(await dayEntries()));
+await closeSheet();
+check('and the column goes back to what it was',
+  (await colState(1)).left !== withExtra.left,
+  `${withExtra.left} -> ${(await colState(1)).left}`);
+
+// Money has no stepper either, so it needed the same way back.
+await openCell(3, 1);
+check('a money day lists its entries too', (await dayEntries()).length === 1, JSON.stringify(await dayEntries()));
+await closeSheet();
+
 // Earlier days cannot be timed — there is nothing still running about them.
 await openCell(1, 0);
 check('an earlier day has no stopwatch', await page.$eval('#day-timer', (e) => e.hidden));
@@ -692,6 +727,100 @@ check('tapping a bar takes the grid to that week', await page2.evaluate(() => {
 }));
 
 await page2.screenshot({ path: `${SP}/shot-trend.png` });
+
+/* ---------- yes/no habits ---------- */
+
+// Still on the week the trend bar jumped to; the day labels are the way back.
+await page2.click('#daycol .dlabel');
+await page2.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
+
+const boolHabit = async (name, budget, atLeast) => {
+  await page2.click('#fab');
+  await page2.waitForSelector('#habit-dialog[open]');
+  await page2.type('input[name=name]', name);
+  await page2.click('input[name=kind][value=bool]');
+  await new Promise((r) => setTimeout(r, 80));
+  if (atLeast) await page2.click('#goal input[value="1"]');
+  await page2.type('input[name=budget]', String(budget));
+  await page2.click('#habit-form button[type=submit]');
+  await page2.waitForFunction(() => !document.querySelector('#habit-dialog').open);
+};
+
+await page2.click('#fab');
+await page2.waitForSelector('#habit-dialog[open]');
+await page2.click('input[name=kind][value=bool]');
+await new Promise((r) => setTimeout(r, 80));
+const editor = await page2.evaluate(() => ({
+  budget: document.querySelector('#budget-label').textContent,
+  daily: document.querySelector('#daily-field').hidden,
+  unit: document.querySelector('#unit-field').hidden,
+  goal: !document.querySelector('#goal-field').hidden,
+}));
+check('a yes/no habit is measured in days a week', editor.budget === 'Days a week', editor.budget);
+check('it has no daily limit or unit to set', editor.daily && editor.unit, JSON.stringify(editor));
+check('it can aim at a target instead of a cap', editor.goal);
+await page2.evaluate(() => document.querySelector('#habit-dialog').close());
+
+// The migration chain reaches a database written before any of this existed.
+await boolHabit('Meditate', 5, true);
+await page2.waitForFunction(() => document.querySelectorAll('.hcol').length === 3);
+check('a v1 database upgrades far enough to hold a yes/no habit', true);
+
+const med = 3;
+const medHead = () => page2.$eval(`.hcol:nth-child(${med})`, (e) => ({
+  left: e.querySelector('[data-left]').textContent,
+  met: e.classList.contains('met'),
+  over: e.classList.contains('over'),
+  ticks: [...e.querySelectorAll('[data-cell]')].map((c) => c.textContent).join(''),
+}));
+check('a target counts down to itself', (await medHead()).left === '5 days to go', JSON.stringify(await medHead()));
+
+const tick = async (col, day) => {
+  await page2.click(`.hcol:nth-child(${col}) .cell[data-day="${day}"]`);
+  await new Promise((r) => setTimeout(r, 90));
+};
+for (const d of [0, 1, 2]) await tick(med, d);
+check('a tap ticks the day', (await medHead()).ticks === '✓✓✓', JSON.stringify(await medHead()));
+check('and the target counts down', (await medHead()).left === '2 days to go', (await medHead()).left);
+
+for (const d of [3, 4]) await tick(med, d);
+const reached = await medHead();
+check('reaching a target is the good end of the week, not the bad one',
+  reached.met && !reached.over && reached.left === '5 of 5 days', JSON.stringify(reached));
+
+await tick(med, 0);
+check('tapping again unticks it',
+  (await medHead()).ticks === '✓✓✓✓' && !(await medHead()).met, JSON.stringify(await medHead()));
+
+// Ticking is a state, not a tally: a day can never hold two of them.
+await tick(med, 0);
+await tick(med, 0);
+await tick(med, 0);
+check('a day never ends up holding two ticks', await page2.evaluate(async () => {
+  const store = await import('./js/store.js');
+  const h = store.listHabits().find((x) => x.name === 'Meditate');
+  const day = store.weekDays(store.weekRange(0))[0];
+  return store.usedInDay(h.id, day) === 1;
+}));
+
+// The other direction still behaves like every other kind.
+await boolHabit('No booze', 1, false);
+await page2.waitForFunction(() => document.querySelectorAll('.hcol').length === 4);
+const booze = 4;
+const boozeHead = () => page2.$eval(`.hcol:nth-child(${booze})`, (e) => ({
+  left: e.querySelector('[data-left]').textContent,
+  met: e.classList.contains('met'),
+  over: e.classList.contains('over'),
+}));
+check('a cap still reads as a cap', (await boozeHead()).left === '1 day left', JSON.stringify(await boozeHead()));
+await tick(booze, 0);
+check('using it up is not yet over', (await boozeHead()).left === '0 days left' && !(await boozeHead()).over,
+  JSON.stringify(await boozeHead()));
+await tick(booze, 1);
+const gone = await boozeHead();
+check('passing it is', gone.over && !gone.met && gone.left === '1 day over', JSON.stringify(gone));
+
+await page2.screenshot({ path: `${SP}/shot-bool.png` });
 
 report();
 await browser.close();

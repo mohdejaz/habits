@@ -1,7 +1,7 @@
 # Habit Budget
 
 A phone-first PWA for keeping habits inside a **weekly budget** — an amount of
-time, a number of things, or an amount of money.
+time, a number of things, an amount of money, or simply whether you did it.
 
 The week is a grid: the days down the side, the habits across. The day column is
 frozen and the habits scroll sideways under it, so a week stays labelled however
@@ -67,6 +67,13 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   logging, and it is why backdating no longer needs a date picker — the grid is
   the date picker. Days that have not happened yet are inert, because logging
   into one is a mis-tap rather than an intention.
+- **The day sheet lists that day's own entries, each removable.** Adding was
+  never the hard part; taking a mistake back off was. A count habit had its
+  stepper, but a stopwatch session or a logged spend could only be undone from
+  the habit sheet's week-wide list — the wrong place to look for one day's
+  mistake, and easy to miss entirely. Removing deletes the entry rather than
+  writing a negative, so the log stays honest, and listing them individually
+  means you can take off the 45m session and keep the 20m one.
 - **Time habits** store minutes. The day sheet for the day still in progress
   offers the stopwatch; while it runs, today's cell ticks with a pulsing dot and
   the weekly budget counts down live. The running timer is a row in the `timers`
@@ -76,6 +83,15 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   `−` removes the most recent entry *of that day* rather than writing a negative
   number, so the log stays honest — and it removes the whole entry, so undoing a
   "3" takes all three.
+- **Yes/no habits** store a tick a day and nothing else. Tapping a cell
+  toggles it — asking "how much" in a sheet would be a tap of ceremony for a
+  question with no answer — and the week is counted in days. They are the one
+  kind that can point either way: a habit can be **at most** 2 days ("no
+  booze") or **at least** 5 days ("meditate"), chosen in the editor. Reaching a
+  target turns the column green rather than red, which is the whole reason the
+  direction exists: built as a plain cap, "meditate 5 days" would go red for
+  succeeding. Everything else is a cap, and the `at_least` column defaults to
+  0, so nothing that already existed changed meaning.
 - **Money habits** store amounts in the currency set in Settings — one currency for
   the whole app, since mixing them would mean exchange rates and those need a network.
   The amounts you have used before appear as chips in the day sheet and log again on
@@ -170,7 +186,7 @@ Schema (`public/js/db.js`):
 
 | table | purpose |
 |---|---|
-| `habits` | name, `kind` (`time`\|`count`\|`money`), `weekly_budget`, `daily_limit` (nullable), unit label, colour, `sort_order`, `archived` |
+| `habits` | name, `kind` (`time`\|`count`\|`money`\|`bool`), `weekly_budget`, `daily_limit` (nullable), `at_least` (0 = a cap, 1 = a target), unit label, colour, `sort_order`, `archived` |
 | `entries` | one row per logged session or tap: `amount`, `started_at`, `ended_at` |
 | `timers` | at most one row per habit — a timer that is currently running |
 | `meta` | settings: week start day, currency, compact cards |
@@ -186,10 +202,15 @@ a 25-hour day in it, and flooring by 86400000 would file them under the wrong
 column. An entry logged into a day that is not today lands at midday, far enough
 from both edges that a DST shift cannot slide it into a neighbouring day.
 
+Whether a week went well is decided in exactly one place — `standing()` in
+`app.js` — which is what keeps the two directions from leaking into the cells,
+the bar, the header and the trend strip separately.
+
 Migrations are a list of SQL strings gated on `PRAGMA user_version`; append one to
-`MIGRATIONS` and bump `SCHEMA_VERSION` to change the schema. Rebuilding a table (as
-the `money` migration does, since SQLite cannot alter a CHECK constraint) has to
-disable foreign keys around the `DROP`, or the cascade takes every entry with it.
+`MIGRATIONS` and bump `SCHEMA_VERSION` to change the schema. Rebuilding a table
+(as the `money` and `bool` migrations both do, since SQLite cannot alter a CHECK
+constraint) has to disable foreign keys around the `DROP`, or the cascade takes
+every entry with it.
 
 ## Layout
 
@@ -221,7 +242,9 @@ node tools/e2e.mjs # drives real Chrome: budgets for all three kinds, logging
                    # sideways drag-to-reorder by the name, that holding a cell
                    # never drags its column, the twelve-week trend (including
                    # that every bar gets its share of the width, which is how a
-                   # colliding class name shows up), compact columns, offline load,
+                   # colliding class name shows up), yes/no habits in both
+                   # directions and that a day never holds two ticks, compact
+                   # columns, offline load,
                    # export/import round-trip, and upgrading a database written
                    # before money existed
 ```

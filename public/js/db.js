@@ -4,7 +4,7 @@
 const IDB_NAME = 'habits-store';
 const IDB_STORE = 'files';
 const IDB_KEY = 'habits.db';
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 let SQL = null;   // the sql.js module
 let db = null;    // the open Database
@@ -113,6 +113,39 @@ const MIGRATIONS = [
   // row gets, so the column can simply be appended.
   `
   ALTER TABLE habits ADD COLUMN daily_limit REAL;
+  `,
+
+  // index 3 -> 4: allow the 'bool' kind, and give every habit a direction.
+  // The CHECK has to be rebuilt again — same dance as the 'money' migration,
+  // foreign keys off around the DROP or the cascade empties `entries`.
+  //
+  // `at_least` is 0 for a budget you stay under and 1 for a target you climb
+  // to. Everything that already exists is a cap, which is what 0 means, so no
+  // row has to be touched.
+  `
+  PRAGMA foreign_keys = OFF;
+
+  CREATE TABLE habits_new (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT    NOT NULL,
+    kind          TEXT    NOT NULL CHECK (kind IN ('time','count','money','bool')),
+    weekly_budget REAL    NOT NULL,
+    daily_limit   REAL,
+    unit          TEXT,
+    color         TEXT    NOT NULL DEFAULT '#5b8def',
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    archived      INTEGER NOT NULL DEFAULT 0,
+    at_least      INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL
+  );
+
+  INSERT INTO habits_new (id, name, kind, weekly_budget, daily_limit, unit, color, sort_order, archived, created_at)
+    SELECT id, name, kind, weekly_budget, daily_limit, unit, color, sort_order, archived, created_at FROM habits;
+
+  DROP TABLE habits;
+  ALTER TABLE habits_new RENAME TO habits;
+
+  PRAGMA foreign_keys = ON;
   `,
 ];
 

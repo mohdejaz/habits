@@ -6,7 +6,7 @@
 import * as db from './db.js';
 
 export const DEFAULT_WEEK_START = 1; // Monday
-export const KINDS = ['time', 'count', 'money'];
+export const KINDS = ['time', 'count', 'money', 'bool'];
 
 /* ---------- currency ---------- */
 
@@ -134,20 +134,22 @@ export function getHabit(id) {
 }
 
 // `dailyLimit` is optional: null means the habit is only capped by the week.
-export function createHabit({ name, kind, weeklyBudget, dailyLimit = null, unit, color }) {
+// `atLeast` is the direction: 0 for a budget to stay under, 1 for a target to
+// reach. Only yes/no habits offer the choice; everything else is a cap.
+export function createHabit({ name, kind, weeklyBudget, dailyLimit = null, unit, color, atLeast = 0 }) {
   const next = db.one('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM habits');
   db.run(
-    `INSERT INTO habits (name, kind, weekly_budget, daily_limit, unit, color, sort_order, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [name.trim(), kind, weeklyBudget, dailyLimit, unit || null, color, next.n, Date.now()]
+    `INSERT INTO habits (name, kind, weekly_budget, daily_limit, unit, color, at_least, sort_order, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name.trim(), kind, weeklyBudget, dailyLimit, unit || null, color, atLeast ? 1 : 0, next.n, Date.now()]
   );
   return db.lastInsertId();
 }
 
-export function updateHabit(id, { name, weeklyBudget, dailyLimit = null, unit, color }) {
+export function updateHabit(id, { name, weeklyBudget, dailyLimit = null, unit, color, atLeast = 0 }) {
   db.run(
-    'UPDATE habits SET name = ?, weekly_budget = ?, daily_limit = ?, unit = ?, color = ? WHERE id = ?',
-    [name.trim(), weeklyBudget, dailyLimit, unit || null, color, id]
+    'UPDATE habits SET name = ?, weekly_budget = ?, daily_limit = ?, unit = ?, color = ?, at_least = ? WHERE id = ?',
+    [name.trim(), weeklyBudget, dailyLimit, unit || null, color, atLeast ? 1 : 0, id]
   );
 }
 
@@ -263,6 +265,27 @@ export function weeklyTotals(weeks) {
   return totals;
 }
 
+/* ---------- yes/no habits ---------- */
+
+// A tick, not a number: a day either holds one entry or none. Toggling off
+// deletes whatever is there rather than writing a negative, so a day can never
+// end up holding two ticks — and an imported database that somehow does is
+// cleaned up the first time the day is tapped.
+export function toggleDay(habitId, day, when) {
+  if (usedInDay(habitId, day) > 0) {
+    db.run(
+      'DELETE FROM entries WHERE habit_id = ? AND started_at >= ? AND started_at < ?',
+      [habitId, day.startMs, day.endMs]
+    );
+    return false;
+  }
+  db.run(
+    'INSERT INTO entries (habit_id, amount, started_at, ended_at, note) VALUES (?, 1, ?, ?, ?)',
+    [habitId, when, when, 'tick']
+  );
+  return true;
+}
+
 export function entriesForWeek(habitId, range) {
   return db.all(
     `SELECT * FROM entries
@@ -270,6 +293,11 @@ export function entriesForWeek(habitId, range) {
       ORDER BY started_at DESC`,
     [habitId, range.startMs, range.endMs]
   );
+}
+
+// The same list over one day: a day is a range like any other.
+export function entriesForDay(habitId, day) {
+  return entriesForWeek(habitId, day);
 }
 
 export function deleteEntry(id) {
