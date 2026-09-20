@@ -3,16 +3,11 @@
 A phone-first PWA for keeping habits inside a **weekly budget** — an amount of
 time, a number of things, an amount of money, or simply whether you did it.
 
-The week is a grid: the days down the side, the habits across. The day column is
-frozen and the habits scroll sideways under it, so a week stays labelled however
-many habits there are. Tap any cell to log an amount for that habit on that day,
-so recording Tuesday's coffees on Thursday is the same gesture as recording
-today's. The whole week is one picture — where the budget has gone, and which
-days it went on.
-
-Below the grid, a strip of bars per habit shows the last twelve weeks against
-budget — the one thing a week view cannot tell you, which is whether anything is
-getting better.
+The week is a grid: the habits down the side, the days across. Each habit is a
+row, and its name and its balance are frozen at the left of it — they are what
+you came to read, so they hold still while the days scroll under them. Tap any
+cell to log an amount for that habit on that day, so recording Tuesday's coffees
+on Thursday is the same gesture as recording today's.
 
 Everything runs offline: SQLite is compiled to WebAssembly and the database file
 lives in the browser, so there is no server and no account.
@@ -62,6 +57,27 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
 - **Budgets are weekly.** A week starts on Monday by default (changeable in Settings).
   Usage is the sum of entries whose timestamp falls in that week, so the budget resets
   on its own — nothing needs to run in the background.
+- **The balance is the headline.** `3h left`, `$5.00 over`, `2 days to go` —
+  read straight down the frozen pane, one line per habit, with a progress bar
+  under each. It used to be a 12px subtitle crammed into a column header beside
+  a 3px sliver of bar; it is the main thing, so it gets a column of its own. The
+  number leads and the word trails, so if a name or a balance ever does outrun
+  its column the tail is what goes — and "left" or "over" is the half the colour
+  has already said.
+- **The pane is 252px, which leaves room for two days in portrait.** That is the
+  trade, and it is the right way round: the balance is what you came to read and
+  the days are the detail. **Rotating the phone buys the whole week** — at 844px
+  all seven fit with no scrolling at all, and the cells grow to fill the width
+  rather than leaving a gap at the right. Rotating back recentres the strip,
+  because a grid left where the wider layout put it comes back showing Monday.
+  The resize is keyed on width rather than height, so a soft keyboard opening
+  over a sheet does not move the grid.
+- **The strip opens centred on today** and stays where you leave it while you are
+  on a week. Moving to another week — with `‹` `›`, or the way back from a date —
+  recentres it, because arriving somewhere new should not land you
+  on Monday when it is Friday. Where the days are scrolled to is read off the
+  element at the top of every render rather than cached from the last scroll
+  event, or a tap could snap the strip back to where it was two frames ago.
 - **Tapping a cell** opens the day sheet: the habit and the date are already
   decided by the cell, so it only has to answer *how much*. That is the whole of
   logging, and it is why backdating no longer needs a date picker — the grid is
@@ -97,10 +113,14 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   The amounts you have used before appear as chips in the day sheet and log again on
   a single tap. A negative amount is accepted, which is how you record a refund.
 - **Cells are tinted with the habit's own colour**, so a week reads as a pattern
-  before any of the numbers do. Because the columns scroll rather than being
-  squeezed onto one screen, they are wide enough for the real formatting —
-  `$12.50` and `1h 30m`, not an abbreviation of them — and for type you can
-  read at arm's length. A count drops its unit, since the column is already
+  before any of the numbers do. Because the days scroll rather than being
+  squeezed onto one screen, a cell is wide enough for the real formatting —
+  `$12.50` and `1h 30m`, not an abbreviation of them. Sixty pixels is still
+  sixty pixels in portrait, though, so the few values that cannot fit even there are
+  shortened in `formatCell()` rather than clipped: `$123.45` becomes `$123`,
+  `12h 30m` becomes `12h30`. Half a number reads as a different number, which a
+  clipped word never does — and the exact amount is in the balance column and
+  the day sheet either way. A count drops its unit, since the row is already
   headed with the habit's name.
 - **Daily limits** are what the grid is best at. Set one in the habit editor and
   any day over it goes amber — every day, not just today, and on any week you
@@ -108,71 +128,37 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   with your day and not with UTC. Nothing is blocked: the log that crosses the
   limit says so in a toast, and later logs stay quiet rather than nagging.
   Leaving the field blank (or zero) means no daily limit.
-- **Over budget** turns the habit's column header red and reports how far past
-  you are instead of clamping at zero. Passing a daily limit is a separate,
-  softer state: the cell goes amber and the column is left alone.
+- **Over budget** turns the habit's balance and its colour rail red and reports
+  how far past you are instead of clamping at zero. Passing a daily limit is a
+  separate, softer state: the cell goes amber and the row is left alone.
 - **Tap a habit's name** for this week's entries, editing, hiding and deletion.
 - `‹` / `›` move between weeks, and the header names the one you are on —
   "This week", "Last week", then "6 weeks ago". It deliberately does not fall
   through to the date range: that is what the line underneath already says, and
   printing both put the same dates on screen twice.
 - **Tapping any date goes back to this week**, and while you are away the
-  otherwise-empty corner above the day column carries a `Today` chip saying so.
-  Tapping a trend bar can drop you eleven weeks back, so there has to be a way
-  home that is not eleven presses of `‹`.
+  otherwise-empty corner beside the day labels carries a `Today` chip saying so.
+  It is one tap home from however far back `‹` has taken you.
 - An earlier week has no "today", so every one of its days is editable and none
   of them is marked.
-- **Reordering** is a press and hold on the habit's *name*, then a drag
-  sideways. The cells are targets in their own right, so only the name is a
-  handle. Holding for 300ms is what separates a reorder from a scroll — moving
-  before that cancels it, on either axis, since the habits scroll horizontally
-  and the page scrolls vertically — and dragging to the edge of the strip
-  scrolls it. `touch-action: pan-y` on the handle is load-bearing: without it
-  the compositor claims the sideways gesture, ignores `preventDefault`, and
-  fires `pointercancel` mid-drag. A synthesised mouse never reproduces that,
-  so no browser test will catch it — only a finger will. The order is stored in `habits.sort_order`, which is why hiding
-  and unhiding a habit puts it back where it was rather than on the end.
-- **Hiding** a habit keeps every entry and only drops its column out of the week;
+- **Reordering** is a press and hold on the frozen pane — the name and balance —
+  then a drag up or down. The cells are targets in their own right, so only the
+  pane is a handle. Holding for 300ms is what separates a reorder from a scroll
+  — moving before that cancels it, on either axis, since the page scrolls
+  vertically and the days scroll horizontally — and dragging to the top or
+  bottom of the viewport scrolls the page. `touch-action: pan-x` on the handle
+  is load-bearing: without it the compositor claims the up-and-down gesture,
+  ignores `preventDefault`, and fires `pointercancel` mid-drag. A synthesised
+  mouse never reproduces that, so no browser test will catch it — only a finger
+  will. The order is stored in `habits.sort_order`, which is why hiding and
+  unhiding a habit puts it back where it was rather than on the end.
+- **Hiding** a habit keeps every entry and only drops its row out of the week;
   Settings lists what is hidden and puts it back. A running timer is stopped and
   logged on the way out, so nothing keeps ticking where you cannot see it. This is
   `habits.archived`, and it is the honest alternative to deleting a habit you have
   stopped tracking but do not want to erase.
-- **Compact** (Settings → Cards) narrows the columns and the day labels without
-  dropping a day, so more habits fit before anything has to be scrolled to.
-
-## Seeing more than one week
-
-Budgets reset every week and the grid can only ever show one, so on its own the
-app has no memory. The strip underneath is where that is answered: one row per
-habit, one bar per week, twelve weeks of them.
-
-It fills the space transposing left behind. Seven rows is seven rows however many
-habits there are — they grow sideways now — so the gap below the grid is
-permanent rather than an empty-state artefact.
-
-- **Bars are scaled against the budget or the worst week, whichever is larger**,
-  and the budget is drawn across as a dashed line. A week can then be read
-  against what it was meant to be, not only against the other weeks. Over budget
-  goes red, the same as everywhere else.
-- **Weeks before the habit existed are not zero weeks, they are nothing.** They
-  show as faint stubs and are left out of the average — otherwise every habit
-  created recently would be libelled by the weeks before it existed.
-- **The current week is excluded from the average too**, since it is still being
-  filled in. A Monday would otherwise drag every habit down.
-- `over 3×` counts the complete weeks that went past budget. It is the number
-  that says whether a budget is a budget or a wish.
-- **Tapping a bar takes the grid to that week**, and the bar for whichever week
-  the grid is showing is ticked underneath. That is a much faster way back
-  through history than pressing `‹` eleven times.
-
-One trap worth recording, since it cost an hour to find: the bar modifier
-classes are `zero`, `before`, `now` and `viewing`, and the obvious name for the
-first of those — `empty` — silently breaks the layout. A bare
-`.empty { padding: 12vh 32px }` already dresses the no-habits-yet screen, so
-`.tbar.empty` inherits 101px of padding, blows the flex row out and collapses
-the remaining bars to zero width. Nothing about the DOM looks wrong; only the
-geometry gives it away. Compound modifiers in this stylesheet are safe, bare
-ones are not.
+- **Compact** (Settings → Cards) shortens the rows and narrows the frozen pane
+  without dropping a day, so more habits fit and portrait buys back a third day.
 
 ## Your data
 
@@ -194,7 +180,7 @@ Schema (`public/js/db.js`):
 `weekly_budget`, `daily_limit` and `amount` share one unit per kind — minutes, whole units, or major
 currency units (`12.5` is £12.50) — so a budget can be compared to a sum directly.
 
-Entries carry a timestamp, not a day number, so which column an entry lands in
+Entries carry a timestamp, not a day number, so which day an entry lands in
 is worked out at render time from the local calendar. `store.weekDays()` builds
 the seven local midnight-to-midnight boundaries by date arithmetic rather than
 by adding 24 hours seven times — the week containing a DST change has a 23- and
@@ -204,7 +190,7 @@ from both edges that a DST shift cannot slide it into a neighbouring day.
 
 Whether a week went well is decided in exactly one place — `standing()` in
 `app.js` — which is what keeps the two directions from leaking into the cells,
-the bar, the header and the trend strip separately.
+the balance, the bar and the colour rail separately.
 
 Migrations are a list of SQL strings gated on `PRAGMA user_version`; append one to
 `MIGRATIONS` and bump `SCHEMA_VERSION` to change the schema. Rebuilding a table
@@ -221,8 +207,9 @@ public/            the entire app — deploy this directory
   js/db.js         SQLite over IndexedDB: open, save, migrate, import/export
   js/store.js      habits, entries, timers, week and day maths
   js/app.js        the grid, the day sheet, and the rest of the interaction
-                   (the frozen day column is one element, each habit another —
-                    which is what makes a column draggable as a unit)
+                   (each habit is one row, with its name and balance sticky
+                    inside it — which is what makes a row draggable as a unit
+                    while the frozen pane still holds still)
   sw.js            precaches the shell for offline use
   vendor/          sql.js wasm build (npm run sync-sqljs to refresh)
 tools/serve.mjs    dev server
@@ -237,14 +224,15 @@ tools/e2e.mjs      browser test suite
 npm start          # in one terminal
 node tools/e2e.mjs # drives real Chrome: budgets for all three kinds, logging
                    # into any day of the week (including an earlier one), daily
-                   # limits colouring the day and not the week, the day column
-                   # staying frozen while the habits scroll, timer persistence,
-                   # sideways drag-to-reorder by the name, that holding a cell
-                   # never drags its column, the twelve-week trend (including
-                   # that every bar gets its share of the width, which is how a
-                   # colliding class name shows up), yes/no habits in both
-                   # directions and that a day never holds two ticks, compact
-                   # columns, offline load,
+                   # limits colouring the day and not the week, the name and
+                   # balance staying frozen while the days scroll *and staying
+                   # put when they do*, the strip opening on today, rotating to
+                   # a whole week that needs no scrolling, that a cell never has
+                   # to clip its own value, timer persistence, vertical
+                   # drag-to-reorder by the
+                   # frozen pane, that holding a cell never drags its row,
+                   # yes/no habits in both directions and that a day never
+                   # holds two ticks, compact rows, offline load,
                    # export/import round-trip, and upgrading a database written
                    # before money existed
 ```

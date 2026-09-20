@@ -81,18 +81,22 @@ body {
 
 /* ---------- the grid ---------- */
 
-/* Days down the side, habits across. The day column is frozen and the habits
-   scroll under it. Every row lines up because the heights are fixed here
-   rather than left to the content: the day column and the habit columns are
-   separate elements and have no other way to agree. */
+/* The habits down the side, the days across. Each habit is one row, and the
+   name and balance are frozen at the left of it: they are what you came to
+   read, so they hold still while the days scroll under them.
+
+   Only about three and a half days fit beside a 188px frozen pane on a phone,
+   which is why render() scrolls the strip to today. Every row lines up because
+   the heights are fixed here rather than left to the content — the day header
+   and the rows are separate elements and have no other way to agree. */
 .grid {
-  --daycol: 80px;
-  --habitcol: 108px;
-  --headh: 64px;
-  --cellh: 50px;
+  --headw: 252px;   /* the frozen pane: 12 pad + name + 8 gap + balance + 8 pad */
+  --balw: 106px;    /* holds "14 cups left" and "1h 12m over" whole at 13px */
+  --cellw: 60px;    /* what "$12.50" and "1h 30m" need at 13px, see .cell */
+  --rowh: 52px;
+  --headh: 36px;
   --cellgap: 5px;
 
-  display: flex;
   overflow-x: auto;
   overscroll-behavior-x: contain;
   padding-bottom: 4px;
@@ -100,21 +104,44 @@ body {
 }
 .grid::-webkit-scrollbar { display: none; }
 
-.daycol {
-  position: sticky;
-  left: 0;
-  z-index: 2;
-  flex: 0 0 auto;
-  width: var(--daycol);
+.habits {
   display: flex;
   flex-direction: column;
   gap: var(--cellgap);
-  /* the right padding is the gutter the cells slide under */
+  /* As wide as the rows inside it, not as wide as the grid. Without this the
+     rows overflow a 390px-wide parent and the sticky heads are left resolving
+     against a box narrower than their own containing block — which Chrome
+     tolerates and other engines do not, so the pane comes unstuck mid-scroll.
+     `min-width` keeps it filling the grid when the days do not. */
+  width: max-content;
+  min-width: 100%;
+}
+
+/* A row is as wide as its content so the scroller has something to scroll;
+   the trailing padding is the gutter the last day stops short of. */
+.dayhead,
+.hrow {
+  display: flex;
+  gap: var(--cellgap);
+  width: max-content;
+  min-width: 100%;
+  padding-right: 12px;
+}
+.dayhead { height: var(--headh); margin-bottom: var(--cellgap); }
+
+/* The frozen pane. Sticky rather than a separate column, so a habit stays one
+   element and can be dragged as a unit — and opaque, or the days scrolling
+   underneath show through. */
+.dayhead-corner,
+.hrow-head {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex: 0 0 var(--headw);
   padding: 0 8px 0 12px;
-  /* opaque, or the cells scrolling underneath show through */
   background: var(--bg);
 }
-.corner { height: var(--headh); display: flex; align-items: center; }
+.dayhead-corner { display: flex; align-items: center; }
 
 .today-btn {
   padding: 5px 9px;
@@ -130,42 +157,36 @@ body {
 }
 .today-btn:active { background: var(--surface-2); }
 
+/* A day label sits over its column, so the name stacks above the date rather
+   than running beside it — 52px has no room for "Wed 16" on one line. */
 .dlabel {
-  height: var(--cellh);
+  flex: 1 0 var(--cellw);
+  height: var(--headh);
   display: flex;
-  align-items: baseline;
-  gap: 5px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   padding: 0;
   border: 0;
   background: none;
   color: inherit;
   font: inherit;
   font-variant-numeric: tabular-nums;
-  text-align: left;
   cursor: default;
 }
 /* Only worth pressing when there is somewhere to go back to. */
-.daycol.away .dlabel { cursor: pointer; }
-.daycol.away .dlabel:active { opacity: .6; }
-/* A single word cannot break, so a column too narrow for it spills sideways
-   under the cells rather than wrapping. Belt and braces either way. */
-.dlabel .dow,
-.dlabel .dom { white-space: nowrap; flex: 0 0 auto; }
-.dlabel .dow { font-size: 15px; font-weight: 650; }
-.dlabel .dom { font-size: 13px; color: var(--muted); }
+.dayhead.away .dlabel { cursor: pointer; }
+.dayhead.away .dlabel:active { opacity: .6; }
+.dlabel .dow { font-size: 12px; font-weight: 650; line-height: 1.25; }
+.dlabel .dom { font-size: 11px; color: var(--muted); line-height: 1.25; }
 .dlabel.today .dow,
 .dlabel.today .dom { color: var(--accent); }
 .dlabel.future { opacity: .45; }
 
-.habits { display: flex; gap: var(--cellgap); padding-right: 12px; }
+/* ---------- one habit's row ---------- */
 
-.hcol {
-  flex: 0 0 auto;
-  width: var(--habitcol);
-  display: flex;
-  flex-direction: column;
-  gap: var(--cellgap);
-  /* the name is a drag handle, so a long press must not select its text
+.hrow {
+  /* the head is a drag handle, so a long press must not select its text
      or raise iOS's callout */
   user-select: none;
   -webkit-user-select: none;
@@ -174,93 +195,115 @@ body {
 
 /* ---------- reordering ---------- */
 
-.habits.reordering .hcol { transition: transform .18s cubic-bezier(.2, .8, .3, 1); }
-.habits.reordering .hcol.dragging {
+.habits.reordering .hrow { transition: transform .18s cubic-bezier(.2, .8, .3, 1); }
+.habits.reordering .hrow.dragging {
   position: relative;
   z-index: 3;
   transition: none;
-  scale: 1.04;
+  scale: 1.02;
   filter: drop-shadow(0 10px 22px rgba(0, 0, 0, .5));
 }
 
-/* ---------- the habit's own header ---------- */
+/* ---------- the name and the balance ---------- */
 
-.hcol-head {
-  height: var(--headh);
-  /* The handle refuses sideways panning, so the compositor never claims a
-     horizontal gesture here and the reorder drag gets to own it. Without this
-     a real finger scrolls the strip instead and the browser fires
+.hrow-head {
+  /* The handle refuses vertical panning, so the compositor never claims an
+     up-and-down gesture here and the reorder drag gets to own it. Without this
+     a real finger scrolls the page instead and the browser fires
      pointercancel mid-drag — which a synthesised mouse never reproduces.
-     The strip still scrolls from the cells, which are most of its surface. */
-  touch-action: pan-y;
+     The page still scrolls from the cells, which are most of its surface. */
+  touch-action: pan-x;
+  height: var(--rowh);
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-width: 0;          /* or the name's ellipsis never kicks in */
-  padding: 0 8px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   border: 0;
-  border-top: 3px solid var(--habit-color, var(--accent));
-  border-radius: 3px 3px 0 0;
-  background: none;
+  border-left: 3px solid var(--habit-color, var(--accent));
+  border-radius: 3px 0 0 3px;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.hcol.over .hcol-head { border-top-color: var(--danger); }
+.hrow.over .hrow-head { border-left-color: var(--danger); }
 /* A target that has been reached. Only yes/no habits can be targets, and for
    them this is the good end of the week rather than the bad one. */
-.hcol.met .hcol-head { border-top-color: var(--ok); }
+.hrow.met .hrow-head { border-left-color: var(--ok); }
 
-.hcol-name,
-.hcol-left {
+.hrow-name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
-.hcol-name { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
-.hcol-left {
-  margin-top: 2px;
-  font-size: 12px;
+
+/* The balance is the headline, not a subtitle — it is what the week comes down
+   to, and reading it down a list is the whole point of the layout. */
+.hrow-bal {
+  flex: 0 0 var(--balw);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+/* The number leads and the word trails, so a clipped tail costs "left" or
+   "over" — which the colour has already said. */
+.hrow-left {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.hcol.over .hcol-left { color: var(--danger); font-weight: 600; }
-.hcol.met .hcol-left { color: var(--ok); font-weight: 600; }
+.hrow.over .hrow-left { color: var(--danger); }
+.hrow.met .hrow-left { color: var(--ok); }
 
-.hcol-bar {
+.hrow-bar {
   display: block;
   height: 3px;
-  margin-top: 6px;
   border-radius: 99px;
   background: var(--surface-2);
   overflow: hidden;
 }
-.hcol-bar > i {
+.hrow-bar > i {
   display: block;
   height: 100%;
   border-radius: 99px;
   background: var(--habit-color, var(--accent));
   transition: width .25s ease;
 }
-.hcol.over .hcol-bar > i { background: var(--danger); }
-.hcol.met .hcol-bar > i { background: var(--ok); }
+.hrow.over .hrow-bar > i { background: var(--danger); }
+.hrow.met .hrow-bar > i { background: var(--ok); }
 
 /* ---------- day cells ---------- */
 
 .cell {
   position: relative;
-  height: var(--cellh);
+  /* Grows to share whatever is left over, which is how a rotated phone shows
+     the whole week filling the width instead of seven cells and a gap. In
+     portrait there is nothing spare and every cell stays --cellw. */
+  flex: 1 0 var(--cellw);
+  height: var(--rowh);
   display: grid;
   place-items: center;
   overflow: hidden;
-  padding: 0 4px;
+  padding: 0 2px;
   border: 1px solid transparent;
   border-radius: 12px;
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
-  font-size: 16px;
+  /* 13px in 60px is what holds "$12.50" and "1h 30m" whole, which is the
+     whole reason the days scroll rather than sharing the width. Values too
+     long even for that are shortened in formatCell(), never clipped. */
+  font-size: 13px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -278,7 +321,7 @@ body {
 .cell.ticking { border-color: var(--habit-color, var(--accent)); }
 
 /* Past the daily limit is a softer state than over the week: the cell goes
-   amber, and the habit's column is left alone. */
+   amber, and the habit's row is left alone. */
 .cell.over {
   background: color-mix(in srgb, var(--warn) 30%, var(--surface-2));
   color: var(--warn);
@@ -306,21 +349,22 @@ body {
 @keyframes pulse { 50% { opacity: .25; } }
 
 /* ---------- compact ---------- */
-/* Same grid, tightened: nothing is dropped, so more habits fit on screen
-   before anything has to be scrolled to. */
+/* Same grid, tightened: nothing is dropped, so more days fit beside the
+   frozen pane before anything has to be scrolled to. */
 
 .grid.compact {
-  --daycol: 72px;   /* 66 left "Wed 16" 2px short of its column */
-  --habitcol: 88px;
-  --headh: 56px;
-  --cellh: 40px;
+  --headw: 220px;
+  --balw: 92px;
+  --cellw: 52px;
+  --rowh: 44px;
+  --headh: 32px;
   --cellgap: 4px;
 }
-.grid.compact .dlabel .dow { font-size: 13px; }
-.grid.compact .dlabel .dom { font-size: 12px; }
-.grid.compact .hcol-name { font-size: 13px; }
-.grid.compact .hcol-left { font-size: 11px; }
-.grid.compact .cell { font-size: 14px; border-radius: 10px; }
+.grid.compact .dlabel .dow { font-size: 11px; }
+.grid.compact .dlabel .dom { font-size: 10px; }
+.grid.compact .hrow-name { font-size: 13px; }
+.grid.compact .hrow-left { font-size: 11px; }
+.grid.compact .cell { font-size: 11px; border-radius: 10px; }
 
 /* ---------- buttons ---------- */
 
@@ -379,85 +423,6 @@ body {
 }
 .tally small { display: block; font-size: 10px; font-weight: 500; color: var(--muted); }
 
-/* ---------- the trend strip ---------- */
-
-/* Below the grid, in the space transposing left behind: seven rows is seven
-   rows however many habits there are, so this gap is permanent. */
-.trend { padding: 20px 12px 0; }
-.trend-head,
-.tscale {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .05em;
-}
-.trend-head { margin: 0 0 14px; }
-
-.tline { margin-bottom: 16px; }
-.tline-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
-.tline-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tline-stat { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-
-.tbars {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  height: 40px;
-}
-/* The budget, drawn across, so a week can be read against what it was meant
-   to be and not only against the other weeks. */
-.tbars::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: var(--budget, 100%);
-  border-top: 1px dashed var(--line);
-  pointer-events: none;
-}
-
-.tbar {
-  flex: 1;
-  height: 100%;
-  display: flex;
-  align-items: flex-end;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-.tbar > i {
-  display: block;
-  width: 100%;
-  min-height: 2px;   /* a week that logged nothing still shows a baseline */
-  border-radius: 3px 3px 0 0;
-  background: var(--habit-color, var(--accent));
-  opacity: .7;
-}
-.tbar.over > i { background: var(--danger); opacity: .9; }
-/* Named `zero` rather than `empty`: a bare `.empty` already dresses the
-   no-habits-yet screen, and a modifier that collides with it inherits 12vh of
-   padding. */
-.tbar.zero > i { background: var(--line); }
-/* Before the habit existed is not the same as a week it logged nothing in. */
-.tbar.before > i { opacity: .2; }
-.tbar.now > i { opacity: 1; }
-.tbar:active > i { opacity: 1; }
-/* Which week the grid above is showing. */
-.tbar.viewing { box-shadow: inset 0 -2px 0 var(--text); }
-
-.tscale { display: flex; justify-content: space-between; margin-top: -4px; }
-
 /* ---------- fab ---------- */
 
 .fab {
@@ -468,9 +433,9 @@ body {
   height: 58px;
   border: 0;
   border-radius: 50%;
-  /* Translucent, because it floats over the trend bars and the last weeks are
-     the ones worth seeing. The alpha is on the background rather than on the
-     element: `opacity` would fade the glyph too and read as disabled. */
+  /* Translucent, because it floats over the bottom rows of the grid and those
+     habits are still worth reading. The alpha is on the background rather than
+     on the element: `opacity` would fade the glyph too and read as disabled. */
   background: color-mix(in srgb, var(--accent) 68%, transparent);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);

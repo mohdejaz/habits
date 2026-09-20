@@ -29,12 +29,13 @@
   </button>
 </header>
 
-<!-- The days down the side, the habits across. The day column is frozen and
-     the habits scroll under it, so a week stays labelled however many habits
-     there are. Each habit is one element — its name and its seven cells —
-     which is also what makes a column draggable as a unit. -->
+<!-- The habits down the side, the days across. Each habit is one row — its
+     name, how the week is going, and its seven cells — which is what makes a
+     row draggable as a unit. The name and the balance are frozen at the left
+     of every row, because they are what you came to read; the days scroll
+     under them, because they are the detail you drill into. -->
 <div class="grid" id="grid">
-  <div class="daycol" id="daycol"></div>
+  <div class="dayhead" id="dayhead"></div>
   <main id="habit-list" class="habits" aria-live="polite"></main>
 </div>
 
@@ -44,14 +45,6 @@
   <p>Add something you want to keep inside a weekly budget — screen time, cigarettes, money spent on takeaways.</p>
   <button class="btn primary" data-action="add-habit">Add your first habit</button>
 </div>
-
-<!-- The grid can only ever show one week, and budgets reset every week, so
-     this is the only place the app says whether anything is going anywhere. -->
-<section id="trend" class="trend" hidden>
-  <h2 class="trend-head" id="trend-head">Recent weeks</h2>
-  <div id="trend-lines"></div>
-  <div class="tscale"><span id="trend-from"></span><span>this week</span></div>
-</section>
 
 <button id="fab" class="fab" aria-label="Add habit">+</button>
 

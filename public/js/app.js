@@ -7,11 +7,11 @@ const COLORS = ['#5b8def', '#3ec98a', '#f2a33c', '#f2555a', '#a878f0', '#3ec2c9'
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const list = $('#habit-list');
-// The habits scroll sideways under a frozen day column, so "the thing that
-// scrolls" during a drag is this element and not the window.
+// The days scroll sideways under a frozen name-and-balance pane. Rows move up
+// and down during a reorder, so "the thing that scrolls" during a drag is the
+// window; this element only ever scrolls horizontally.
 const grid = $('#grid');
-const daycol = $('#daycol');
-const trend = $('#trend');
+const dayhead = $('#dayhead');
 const emptyState = $('#empty');
 const habitDialog = $('#habit-dialog');
 const habitForm = $('#habit-form');
@@ -28,7 +28,8 @@ let days = [];           // the seven columns of the week on screen
 let todayIndex = -1;     // which column is today, or -1 on an earlier week
 let daySheet = null;     // { habitId, dayIndex } while the day sheet is open
 let draggedAt = 0;       // when a reorder last finished, to swallow its trailing click
-let scrollLeft = 0;      // how far the habits are scrolled, kept across renders
+let scrollLeft = 0;      // how far the days are scrolled, kept across renders
+let recentre = true;     // next render should put today back in view
 
 /* ---------- formatting ---------- */
 
@@ -76,6 +77,26 @@ function formatMoney(value) {
   return moneyFormat().format(value);
 }
 
+// The same currency without the cents, for a cell too narrow to hold them.
+let moneyFmtWhole = null;
+let moneyFmtWholeFor = null;
+
+function moneyFormatWhole() {
+  const code = store.currency();
+  if (moneyFmtWholeFor !== code) {
+    moneyFmtWholeFor = code;
+    try {
+      moneyFmtWhole = new Intl.NumberFormat(undefined, {
+        style: 'currency', currency: code, currencyDisplay: 'narrowSymbol',
+        minimumFractionDigits: 0, maximumFractionDigits: 0,
+      });
+    } catch {
+      moneyFmtWhole = buildMoneyFormat(code);
+    }
+  }
+  return moneyFmtWhole;
+}
+
 function currencySymbol() {
   const part = moneyFormat().formatToParts(0).find((p) => p.type === 'currency');
   return part ? part.value : store.currency();
@@ -101,6 +122,24 @@ function formatBare(habit, value) {
   if (habit.kind === 'count') return String(Math.round(value * 10) / 10);
   if (habit.kind === 'bool') return String(Math.round(value));
   return formatAmount(habit, value);
+}
+
+// What a day cell says. The cells are narrow — the days scroll rather than
+// sharing the width, but 60px is still 60px — so a value that fits keeps its
+// real formatting, `$12.50` and `1h 30m` included, and only the few that
+// cannot lose their least informative digits. They are not clipped instead,
+// because half a number reads as a different number; the exact amount is in
+// the balance column and in the day sheet either way.
+function formatCell(habit, value) {
+  if (habit.kind === 'money' && Math.abs(value) >= 100) {
+    return moneyFormatWhole().format(value);
+  }
+  if (habit.kind === 'time' && Math.abs(value) >= 600) {
+    const total = Math.round(Math.abs(value));
+    const sign = value < 0 ? '-' : '';
+    return `${sign}${Math.floor(total / 60)}h${String(total % 60).padStart(2, '0')}`;
+  }
+  return formatBare(habit, value);
 }
 
 function formatBudget(habit) {
@@ -162,16 +201,22 @@ function standing(habit, used) {
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function render() {
-  // Columns are about to be replaced, so a drag in flight is holding nodes
+  // Rows are about to be replaced, so a drag in flight is holding nodes
   // that are on their way out. Drop it rather than move detached elements.
   if (drag) cleanupDrag();
+
+  // Where the days are scrolled to, read now rather than remembered from the
+  // last scroll event: replacing the rows clamps it to zero, and a scroll the
+  // page made programmatically may not have fired its event yet. A hidden grid
+  // has no scroll worth reading.
+  if (!grid.hidden) scrollLeft = grid.scrollLeft;
 
   const range = store.weekRange(weekOffset);
   const habits = store.listHabits();
   const usage = store.usageByDay(range);
   days = store.weekDays(range);
   timers = weekOffset === 0 ? store.runningTimers() : new Map();
-  // Which row is today — and so also the edge past which the days have not
+  // Which column is today — and so also the edge past which the days have not
   // happened yet. An earlier week has neither.
   todayIndex = weekOffset === 0 ? store.dayIndexOf(Date.now(), days) : -1;
 
@@ -189,28 +234,56 @@ function render() {
   grid.hidden = habits.length === 0;
   grid.classList.toggle('compact', store.getSetting('compact', '0') === '1');
 
-  renderDayColumn();
-  list.replaceChildren(...habits.map((h) => column(h, usage.get(h.id) || new Array(7).fill(0))));
-  renderTrend(habits);
-  // A re-render resets the scroll, which would hide whichever habit the user
-  // had scrolled to. Keeping it is cheap and much less jarring.
-  grid.scrollLeft = scrollLeft;
+  renderDayHead();
+  list.replaceChildren(...habits.map((h) => row(h, usage.get(h.id) || new Array(7).fill(0))));
+  // Only about three and a half days fit, so landing on Monday when today is
+  // Friday would hide the one day you are most likely to want. Recentring is
+  // for arriving somewhere new — boot, or a different week; inside a week the
+  // scroll is left where the user put it.
+  // A hidden grid has no width to measure against, so the first render of an
+  // empty app must not spend the recentre and leave the real one unscrolled.
+  if (recentre && !grid.hidden) {
+    recentre = false;
+    scrollToDay(todayIndex < 0 ? 0 : todayIndex);
+  } else {
+    grid.scrollLeft = scrollLeft;
+  }
   tick();
 }
 
-// The frozen column: a blank corner to clear the habit headers, then a label
-// per day.
-function renderDayColumn() {
+// Puts one day in the middle of whatever is visible beside the frozen pane.
+// The pane overlays the left of the scroller, so the room the days actually
+// get is that much narrower than the grid. Measured off the elements rather
+// than computed from --cellw, because a cell grows to fill the spare width on
+// a rotated phone and is then wider than the variable says.
+function scrollToDay(index) {
+  const row = list.firstElementChild;
+  const cell = row && row.querySelectorAll('[data-cell]')[index];
+  const head = row && row.querySelector('.hrow-head');
+  if (!cell || !head) return;
+
+  const box = cell.getBoundingClientRect();
+  const headw = head.getBoundingClientRect().width;
+  const view = grid.clientWidth - headw;
+  // Where the cell sits now, against where it should sit. Browsers clamp the
+  // result, so a week that already fits stays at zero.
+  const at = box.left - grid.getBoundingClientRect().left;
+  grid.scrollLeft += at - headw - (view - box.width) / 2;
+  scrollLeft = grid.scrollLeft;
+}
+
+// The header row: a corner that clears the frozen pane, then a label per day.
+function renderDayHead() {
   // Away from this week, every date is a way back to it — and the corner,
   // which is otherwise dead space, says so out loud.
   const away = weekOffset !== 0;
-  daycol.classList.toggle('away', away);
+  dayhead.classList.toggle('away', away);
 
   const corner = document.createElement('div');
-  corner.className = 'corner';
+  corner.className = 'dayhead-corner';
   if (away) corner.innerHTML = '<button type="button" class="today-btn" data-today>Today</button>';
 
-  daycol.replaceChildren(corner, ...days.map((day) => {
+  dayhead.replaceChildren(corner, ...days.map((day) => {
     const el = document.createElement('button');
     el.type = 'button';
     el.className = 'dlabel';
@@ -224,11 +297,11 @@ function renderDayColumn() {
   }));
 }
 
-// `daily` is the seven totals for this habit, in day order. The column keeps
+// `daily` is the seven totals for this habit, in day order. The row keeps
 // them on the element so a tick can recompute without touching the database.
-function column(habit, daily) {
+function row(habit, daily) {
   const el = document.createElement('div');
-  el.className = 'hcol';
+  el.className = 'hrow';
   el.dataset.id = habit.id;
   el.style.setProperty('--habit-color', habit.color);
 
@@ -244,10 +317,12 @@ function column(habit, daily) {
     .join('');
 
   el.innerHTML = `
-    <button type="button" class="hcol-head" data-head>
-      <span class="hcol-name">${escapeHtml(habit.name)}</span>
-      <span class="hcol-left" data-left></span>
-      <span class="hcol-bar"><i data-bar></i></span>
+    <button type="button" class="hrow-head" data-head>
+      <span class="hrow-name">${escapeHtml(habit.name)}</span>
+      <span class="hrow-bal">
+        <span class="hrow-left" data-left></span>
+        <span class="hrow-bar"><i data-bar></i></span>
+      </span>
     </button>
     ${cells}`;
 
@@ -267,7 +342,7 @@ function tick() {
     el.classList.toggle('running', Boolean(startedAt));
 
     const used = el._days.reduce((a, b) => a + b, 0) + live;
-    // Summing floats leaves dust, and a column must not go red over a
+    // Summing floats leaves dust, and a row must not go red over a
     // hundredth of a penny.
     const how = standing(habit, used);
     el.classList.toggle('over', how.over);
@@ -288,11 +363,11 @@ function tick() {
       cell.classList.toggle('logged', value > 0);
       cell.classList.toggle('over', dayOver);
       cell.classList.toggle('ticking', Boolean(startedAt) && i === todayIndex);
-      // The column is headed with the habit's name, so a count needs only its
+      // The row is headed with the habit's name, so a count needs only its
       // number; time and money carry their own unit and keep it. A yes/no day
       // is a tick, which is the whole of what it has to say.
       cell.textContent = value > 0
-        ? (habit.kind === 'bool' ? '✓' : formatBare(habit, value))
+        ? (habit.kind === 'bool' ? '✓' : formatCell(habit, value))
         : '';
       cell.setAttribute('aria-label', cellLabel(habit, i, value));
     }
@@ -307,107 +382,38 @@ function cellLabel(habit, index, value) {
   return `${habit.name}, ${when}, ${value > 0 ? formatAmount(habit, value) : 'nothing'} logged`;
 }
 
-/* ---------- the trend strip ---------- */
-
-const TREND_WEEKS = 12;
-
-function renderTrend(habits) {
-  trend.hidden = habits.length === 0;
-  if (trend.hidden) return;
-
-  const weeks = store.recentWeeks(TREND_WEEKS);
-  const totals = store.weeklyTotals(weeks);
-  $('#trend-head').textContent = `Last ${TREND_WEEKS} weeks`;
-  $('#trend-from').textContent = `${TREND_WEEKS} weeks ago`;
-  $('#trend-lines').replaceChildren(
-    ...habits.map((h) => trendLine(h, totals.get(h.id) || new Array(weeks.length).fill(0), weeks))
-  );
-}
-
-function trendLine(habit, series, weeks) {
-  const el = document.createElement('div');
-  el.className = 'tline';
-  el.style.setProperty('--habit-color', habit.color);
-
-  // Scaled against the budget or the worst week, whichever is larger, so the
-  // budget line always lands somewhere on the chart and bars stay comparable
-  // to it rather than only to each other.
-  const peak = Math.max(habit.weekly_budget, ...series) || 1;
-
-  // Weeks before the habit existed are not zero weeks, they are nothing, and
-  // averaging them in would libel every habit created recently. The current
-  // week is still being filled in, so it is left out too.
-  const born = weeks.findIndex((w) => w.endMs > habit.created_at);
-  const firstReal = born < 0 ? weeks.length : born;
-  const complete = series.slice(firstReal, series.length - 1);
-  // "The wrong side of the number" — past it for a cap, short of it for a
-  // target. The bar class stays `over` either way, because what it means on
-  // screen is the same: this week did not go well.
-  const slack = habit.kind === 'money' ? 0.005 : 0;
-  const missed = (v) => (habit.at_least ? v < habit.weekly_budget : v - habit.weekly_budget > slack);
-  const badWeeks = complete.filter(missed).length;
-  const average = complete.length
-    ? complete.reduce((a, b) => a + b, 0) / complete.length
-    : null;
-
-  const bars = weeks
-    .map((week, i) => {
-      const value = series[i];
-      const before = i < firstReal;
-      const classes = [
-        'tbar',
-        before ? 'before' : '',
-        value <= 0 ? 'zero' : '',
-        !before && missed(value) ? 'over' : '',
-        week.offset === 0 ? 'now' : '',
-        week.offset === weekOffset ? 'viewing' : '',
-      ];
-      const height = Math.max(2, Math.round((value / peak) * 100));
-      const label = `${habit.name}, ${store.formatWeekRange(week)}, ${
-        before ? 'before this habit existed' : formatAmount(habit, value)}`;
-      return `<button type="button" class="${classes.filter(Boolean).join(' ')}"
-        data-offset="${week.offset}" aria-label="${escapeHtml(label)}"
-        ><i style="height:${value > 0 ? height : 2}%"></i></button>`;
-    })
-    .join('');
-
-  el.innerHTML = `
-    <div class="tline-head">
-      <span class="tline-name">${escapeHtml(habit.name)}</span>
-      <span class="tline-stat">${average === null
-        ? 'no full week yet'
-        : `avg ${escapeHtml(formatAmount(habit, average))}${badWeeks ? ` · ${habit.at_least ? 'missed' : 'over'} ${badWeeks}×` : ''}`}</span>
-    </div>
-    <div class="tbars" style="--budget:${Math.min(100, (habit.weekly_budget / peak) * 100)}%">${bars}</div>`;
-  return el;
-}
-
-// A bar is the week it stands for, so tapping one takes the grid there.
-trend.addEventListener('click', (event) => {
-  const bar = event.target.closest('[data-offset]');
-  if (!bar) return;
-  weekOffset = Number(bar.dataset.offset);
-  render();
-});
-
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 /* ---------- grid interactions ---------- */
 
-grid.addEventListener('scroll', () => {
-  if (!drag) scrollLeft = grid.scrollLeft;
-}, { passive: true });
+// Rotating the phone changes how many days fit beside the frozen pane, and a
+// strip left where the wider layout put it can come back showing none of the
+// days worth seeing. Width is the test, not height: a soft keyboard opening
+// over a sheet fires resize too, and that must not move the grid.
+let lastWidth = window.innerWidth;
+let resizeTimer = 0;
+window.addEventListener('resize', () => {
+  if (window.innerWidth === lastWidth) return;
+  lastWidth = window.innerWidth;
+  clearTimeout(resizeTimer);
+  // Debounced, or the rotation animation re-renders on every intermediate size.
+  resizeTimer = setTimeout(() => {
+    recentre = true;
+    render();
+  }, 150);
+});
 
-daycol.addEventListener('click', (event) => {
+dayhead.addEventListener('click', (event) => {
   if (!event.target.closest('.dlabel, [data-today]')) return;
   if (weekOffset === 0) return;
   weekOffset = 0;
+  recentre = true;
   render();
 });
 
-// Releasing a drag is followed by a click on a column this render has already
+// Releasing a drag is followed by a click on a row this render has already
 // replaced, and that click must not also open a sheet. A time window rather
 // than a flag, because on touch the click may never arrive at all — the
 // element is gone before it fires — and a flag left standing would swallow the
@@ -416,7 +422,7 @@ const CLICK_AFTER_DRAG_MS = 400;
 
 list.addEventListener('click', (event) => {
   if (Date.now() - draggedAt < CLICK_AFTER_DRAG_MS) return;
-  const el = event.target.closest('.hcol');
+  const el = event.target.closest('.hrow');
   if (!el) return;
 
   const cell = event.target.closest('[data-cell]');
@@ -454,24 +460,24 @@ function crossedDailyLimit(habit, day, usedBefore) {
 
 /* ---------- drag to reorder ---------- */
 
-const HOLD_MS = 300;  // press-and-hold before a column lifts
+const HOLD_MS = 300;  // press-and-hold before a row lifts
 const SLOP = 8;       // travel before the hold counts as a scroll instead
 const EDGE = 56;      // auto-scroll zone at the left and right of the grid
 
 let drag = null;
 
-// Only the name is a handle. Every cell is a target in its own right, so a
-// hold on one must not drag the column out from under the finger.
+// Only the head is a handle. Every cell is a target in its own right, so a
+// hold on one must not drag the row out from under the finger.
 //
-// Everything below works in the grid's own scrolled coordinates, on the X
-// axis: the habits scroll sideways, and a drag and the scroll underneath it
-// have to agree about where a column is.
-const gridX = (event) => event.clientX + grid.scrollLeft;
+// Everything below works in page coordinates, on the Y axis: the rows are
+// stacked down the page, and a drag and the page scroll underneath it have to
+// agree about where a row is.
+const pageY = (event) => event.clientY + window.scrollY;
 
 list.addEventListener('pointerdown', (event) => {
   if (event.pointerType === 'mouse' && event.button !== 0) return;
-  const head = event.target.closest('.hcol-head');
-  const el = head && head.closest('.hcol');
+  const head = event.target.closest('.hrow-head');
+  const el = head && head.closest('.hrow');
   if (!el) return;
   if (list.children.length < 2) return;
 
@@ -479,9 +485,9 @@ list.addEventListener('pointerdown', (event) => {
   drag = {
     el,
     pointerId: event.pointerId,
-    startX: gridX(event),
-    startY: event.clientY,
-    x: gridX(event),
+    startX: event.clientX,
+    startY: pageY(event),
+    y: pageY(event),
     active: false,
     raf: 0,
     scrollBy: 0,
@@ -490,19 +496,20 @@ list.addEventListener('pointerdown', (event) => {
 });
 
 function beginDrag() {
-  const cols = [...list.children];
-  const scroll = grid.scrollLeft;
-  drag.cols = cols;
-  drag.rects = cols.map((c) => {
+  const rows = [...list.children];
+  const scroll = window.scrollY;
+  drag.rows = rows;
+  // `start` and `size` are along the drag axis, which is now the vertical one.
+  drag.rects = rows.map((c) => {
     const box = c.getBoundingClientRect();
-    return { left: box.left + scroll, width: box.width, centre: box.left + scroll + box.width / 2 };
+    return { start: box.top + scroll, size: box.height, centre: box.top + scroll + box.height / 2 };
   });
-  drag.from = cols.indexOf(drag.el);
+  drag.from = rows.indexOf(drag.el);
   drag.to = drag.from;
 
-  const gap = parseFloat(getComputedStyle(list).columnGap);
+  const gap = parseFloat(getComputedStyle(list).rowGap);
   drag.gap = Number.isFinite(gap) ? gap : 5;
-  drag.shift = drag.rects[drag.from].width + drag.gap;
+  drag.shift = drag.rects[drag.from].size + drag.gap;
   drag.active = true;
 
   list.classList.add('reordering');
@@ -515,65 +522,63 @@ list.addEventListener('pointermove', (event) => {
   if (!drag || event.pointerId !== drag.pointerId) return;
   if (!drag.active) {
     // A finger that travels before the hold expires was trying to scroll —
-    // sideways through the habits, or down the page. Either cancels.
-    if (Math.abs(gridX(event) - drag.startX) > SLOP
-      || Math.abs(event.clientY - drag.startY) > SLOP) cancelDrag();
+    // down the page, or sideways through the days. Either cancels.
+    if (Math.abs(pageY(event) - drag.startY) > SLOP
+      || Math.abs(event.clientX - drag.startX) > SLOP) cancelDrag();
     return;
   }
-  drag.x = gridX(event);
+  drag.y = pageY(event);
   updateDrag();
-  autoScroll(event.clientX);
+  autoScroll(event.clientY);
 });
 
 function updateDrag() {
-  const dx = drag.x - drag.startX;
-  drag.el.style.transform = `translateX(${dx}px)`;
+  const dy = drag.y - drag.startY;
+  drag.el.style.transform = `translateY(${dy}px)`;
 
-  const to = slotFor(drag.rects[drag.from].centre + dx);
+  const to = slotFor(drag.rects[drag.from].centre + dy);
   if (to === drag.to) return;
   drag.to = to;
 
-  // Columns between the old slot and the new one slide by exactly the space
-  // the dragged column vacated, so uneven widths would still line up.
-  drag.cols.forEach((c, i) => {
+  // Rows between the old slot and the new one slide by exactly the space the
+  // dragged row vacated, so uneven heights would still line up.
+  drag.rows.forEach((c, i) => {
     if (i === drag.from) return;
     let move = 0;
     if (to > drag.from && i > drag.from && i <= to) move = -drag.shift;
     else if (to < drag.from && i >= to && i < drag.from) move = drag.shift;
-    c.style.transform = move ? `translateX(${move}px)` : '';
+    c.style.transform = move ? `translateY(${move}px)` : '';
   });
 }
 
-// Which slot the column would land in. The comparison has to be against the
-// layout with the column *removed* — once it lifts, everything to its right
-// closes the gap, so measuring against the original centres lands it a slot
-// too far.
+// Which slot the row would land in. The comparison has to be against the
+// layout with the row *removed* — once it lifts, everything below it closes
+// the gap, so measuring against the original centres lands it a slot too far.
 function slotFor(centre) {
   const { rects, from, gap } = drag;
-  const width = rects[from].width;
+  const size = rects[from].size;
   const others = rects.filter((_, i) => i !== from);
 
-  let left = rects[0].left;
+  let start = rects[0].start;
   let best = 0;
   let bestDistance = Infinity;
 
   for (let slot = 0; slot < rects.length; slot++) {
-    const distance = Math.abs(left + width / 2 - centre);
+    const distance = Math.abs(start + size / 2 - centre);
     if (distance < bestDistance) {
       bestDistance = distance;
       best = slot;
     }
-    if (slot < others.length) left += others[slot].width + gap;
+    if (slot < others.length) start += others[slot].size + gap;
   }
   return best;
 }
 
-// Dragging to the edge of the grid scrolls it, which is the only way to move
-// a column past the fold on a phone.
-function autoScroll(clientX) {
-  const box = grid.getBoundingClientRect();
-  const before = clientX - (box.left + EDGE);
-  const after = clientX - (box.right - EDGE);
+// Dragging to the top or bottom of the viewport scrolls the page, which is the
+// only way to move a row past the fold on a phone.
+function autoScroll(clientY) {
+  const before = clientY - EDGE;
+  const after = clientY - (window.innerHeight - EDGE);
   drag.scrollBy = before < 0 ? Math.max(before, -24) / 3 : after > 0 ? Math.min(after, 24) / 3 : 0;
   if (drag.scrollBy && !drag.raf) stepScroll();
 }
@@ -583,13 +588,13 @@ function stepScroll() {
     if (!drag || !drag.active) return;
     drag.raf = 0;
     if (!drag.scrollBy) return;
-    const before = grid.scrollLeft;
-    grid.scrollLeft += drag.scrollBy;
-    const moved = grid.scrollLeft - before;
+    const before = window.scrollY;
+    window.scrollBy(0, drag.scrollBy);
+    const moved = window.scrollY - before;
     if (moved) {
-      // A still finger over a scrolling grid has still moved across the
-      // habits, and the drag works in the grid's scrolled coordinates.
-      drag.x += moved;
+      // A still finger over a scrolling page has still moved across the
+      // habits, and the drag works in page coordinates.
+      drag.y += moved;
       updateDrag();
       stepScroll();
     }
@@ -615,14 +620,11 @@ function endDrag(event) {
     cancelDrag();
     return;
   }
-  const { cols, from, to } = drag;
-  const order = cols.map((c) => c._habit.id);
+  const { rows, from, to } = drag;
+  const order = rows.map((c) => c._habit.id);
   order.splice(to, 0, ...order.splice(from, 1));
 
   draggedAt = Date.now();
-  // Where the grid is scrolled to is now the truth, not what the drag started
-  // with: auto-scroll may have moved it.
-  scrollLeft = grid.scrollLeft;
   cleanupDrag();
   if (to !== from) {
     store.reorderHabits(order);
@@ -649,15 +651,18 @@ function cleanupDrag() {
     } catch {
       // the pointer is already gone, which is the state we wanted anyway
     }
-    for (const c of drag.cols) c.style.transform = '';
+    for (const c of drag.rows) c.style.transform = '';
   }
   drag = null;
 }
 
 /* ---------- week navigation ---------- */
 
-$('#week-prev').addEventListener('click', () => { weekOffset -= 1; render(); });
-$('#week-next').addEventListener('click', () => { if (weekOffset < 0) { weekOffset += 1; render(); } });
+// Arriving at a different week is arriving somewhere new, so the day strip
+// starts where it is worth starting rather than wherever the last week was
+// left scrolled to.
+$('#week-prev').addEventListener('click', () => { weekOffset -= 1; recentre = true; render(); });
+$('#week-next').addEventListener('click', () => { if (weekOffset < 0) { weekOffset += 1; recentre = true; render(); } });
 
 /* ---------- habit editor ---------- */
 
@@ -1134,8 +1139,12 @@ async function boot() {
   await db.open();
   render();
 
+  // Only a running stopwatch changes anything from one second to the next, and
+  // tick() rewrites every cell of every row. Doing that unconditionally meant a
+  // full pass over the grid every second, which a phone notices most while the
+  // days are being swiped. render() still calls tick() directly.
   setInterval(() => {
-    tick();
+    if (timers.size) tick();
     // The sheet shows the same running clock, and it is open over the grid.
     if (dayDialog.open) paintDaySheet();
   }, 1000);
