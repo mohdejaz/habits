@@ -20,6 +20,7 @@ let editingId = null;    // habit being edited in the sheet
 let detailId = null;     // habit shown in the detail sheet
 let timers = new Map();  // habit_id -> started_at, for live ticking
 let amountId = null;     // habit being logged in the amount sheet
+let amountManual = false; // amount sheet opened from "Log manually" (date is pickable)
 
 /* ---------- formatting ---------- */
 
@@ -82,6 +83,13 @@ function formatAmount(habit, value) {
   return `${n} ${unit}`;
 }
 
+// The "N of M" forms name the unit once, on the limit, so a count habit
+// reads "2 of 3 cups" rather than "2 cups of 3 cups".
+function formatBare(habit, value) {
+  if (habit.kind === 'count') return String(Math.round(value * 10) / 10);
+  return formatAmount(habit, value);
+}
+
 function formatBudget(habit) {
   if (habit.kind === 'time') return formatMinutes(habit.weekly_budget);
   if (habit.kind === 'money') return formatMoney(habit.weekly_budget);
@@ -95,6 +103,27 @@ function formatClock(ms) {
   const s = total % 60;
   const pad = (n) => String(n).padStart(2, '0');
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+// <input type=date> speaks local calendar days; Date does not, so convert
+// through the parts rather than through toISOString (which is UTC).
+function toDateInput(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Today keeps the real clock time; any other day lands at midday, far enough
+// from both edges that a DST shift cannot slide it into a neighbouring day.
+function fromDateInput(value) {
+  const [y, m, d] = String(value).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  if (value === toDateInput(Date.now())) return Date.now();
+  return new Date(y, m - 1, d, 12).getTime();
+}
+
+function formatDay(ms) {
+  return new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function toast(message) {
@@ -115,6 +144,9 @@ function render() {
   const range = store.weekRange(weekOffset);
   const habits = store.listHabits();
   const usage = store.usageForWeek(range);
+  // "Today" only exists in the current week; an earlier week shows the
+  // weekly picture alone.
+  const today = weekOffset === 0 ? store.usageForDay() : null;
   timers = weekOffset === 0 ? store.runningTimers() : new Map();
 
   $('#week-title').textContent =
@@ -126,11 +158,15 @@ function render() {
   $('#fab').hidden = habits.length === 0;
   list.classList.toggle('compact', store.getSetting('compact', '0') === '1');
 
-  list.replaceChildren(...habits.map((h) => card(h, usage.get(h.id) || 0)));
+  list.replaceChildren(
+    ...habits.map((h) => card(h, usage.get(h.id) || 0, today && (today.get(h.id) || 0)))
+  );
   tick();
 }
 
-function card(habit, used) {
+// `usedToday` is null when an earlier week is on screen, which hides the
+// daily line rather than showing a total that belongs to a different week.
+function card(habit, used, usedToday) {
   const el = document.createElement('article');
   el.className = 'card';
   el.dataset.id = habit.id;
@@ -168,10 +204,12 @@ function card(habit, used) {
       <span class="label" data-remaining-label></span>
     </div>
     <div class="bar"><i data-bar></i></div>
+    <div class="today" data-today hidden></div>
     ${controls}`;
 
   el._habit = habit;
   el._used = used;
+  el._usedToday = usedToday;
   return el;
 }
 
@@ -203,6 +241,18 @@ function tick() {
     const spentEl = $('[data-spent]', el);
     if (spentEl) spentEl.textContent = formatAmount(habit, used);
 
+    const todayEl = $('[data-today]', el);
+    const limit = habit.daily_limit;
+    // A running timer counts towards today as well as the week.
+    const todayUsed = el._usedToday === null ? null : el._usedToday + (habit.kind === 'time' ? live : 0);
+    todayEl.hidden = !limit || todayUsed === null;
+    if (!todayEl.hidden) {
+      const dayOver = habit.kind === 'money' ? todayUsed - limit > 0.005 : todayUsed > limit;
+      todayEl.classList.toggle('over', dayOver);
+      todayEl.textContent =
+        `Today ${formatBare(habit, todayUsed)} of ${formatAmount(habit, limit)}${dayOver ? ' — over' : ''}`;
+    }
+
     const elapsedEl = $('[data-elapsed]', el);
     if (elapsedEl) {
       elapsedEl.classList.toggle('idle', !startedAt);
@@ -218,6 +268,7 @@ function tick() {
 function refreshCard(el) {
   const habit = el._habit;
   el._used = store.usedInWeek(habit.id, store.weekRange(weekOffset));
+  if (el._usedToday !== null) el._usedToday = store.usedInDay(habit.id);
   if (habit.kind === 'count') {
     $('.tally', el).firstChild.textContent = String(Math.round(el._used * 10) / 10);
     $('[data-act=dec]', el).disabled = el._used <= 0;
@@ -242,20 +293,28 @@ list.addEventListener('click', (event) => {
     case 'toggle-timer': {
       if (weekOffset !== 0) return toast('Timers only run in the current week');
       if (timers.has(habit.id)) {
+        const before = dayTotal(habit);
         const minutes = store.stopTimer(habit.id);
-        toast(minutes ? `Logged ${formatMinutes(minutes)} of ${habit.name}` : 'Too short to log');
+        const note = crossedDailyLimit(habit, before) ? dailyLimitNote(habit) : '';
+        toast(minutes ? `Logged ${formatMinutes(minutes)} of ${habit.name}${note}` : 'Too short to log');
       } else {
         store.startTimer(habit.id);
       }
       render();
       break;
     }
-    case 'inc':
+    case 'inc': {
       if (weekOffset !== 0) return toast('Switch to this week to log');
+      const before = dayTotal(habit);
       store.increment(habit.id);
       buzz(10);
       refreshCard(el);
+      // The stepper is otherwise silent; the daily limit is worth a word.
+      if (crossedDailyLimit(habit, before)) {
+        toast(`Past today's ${formatAmount(habit, habit.daily_limit)} limit`);
+      }
       break;
+    }
     case 'dec':
       if (!store.decrement(habit.id, range)) return toast('Nothing logged this week');
       buzz(10);
@@ -272,6 +331,27 @@ list.addEventListener('click', (event) => {
 
 function buzz(ms) {
   if (navigator.vibrate) navigator.vibrate(ms);
+}
+
+/* ---------- daily limits ---------- */
+
+// Today's total before a log, so the crossing can be spotted afterwards.
+// Zero for habits without a limit: nothing reads it in that case.
+function dayTotal(habit) {
+  return habit.daily_limit ? store.usedInDay(habit.id) : 0;
+}
+
+// True when *this* log is what took today past the limit. Only the crossing
+// is worth a word — warning on every later tap would just be nagging.
+function crossedDailyLimit(habit, usedBefore) {
+  if (!habit.daily_limit) return false;
+  const slack = habit.kind === 'money' ? 0.005 : 0;
+  return usedBefore - habit.daily_limit <= slack
+    && store.usedInDay(habit.id) - habit.daily_limit > slack;
+}
+
+function dailyLimitNote(habit) {
+  return ` — past today's ${formatAmount(habit, habit.daily_limit)} limit`;
 }
 
 /* ---------- drag to reorder ---------- */
@@ -482,6 +562,11 @@ function syncKindFields() {
       : kind === 'money' ? `Weekly budget (${currencySymbol()})`
         : 'Weekly budget (how many)';
   habitForm.budget.placeholder = kind === 'time' ? '180' : kind === 'money' ? '50' : '10';
+  $('#daily-label').innerHTML =
+    (kind === 'time' ? 'Daily limit (minutes)'
+      : kind === 'money' ? `Daily limit (${escapeHtml(currencySymbol())})`
+        : 'Daily limit (how many)') + ' <em>(optional)</em>';
+  habitForm.daily.placeholder = kind === 'time' ? '30' : kind === 'money' ? '10' : '2';
   // Only counts get a free-text unit; money is labelled by the currency.
   $('#unit-field').hidden = kind !== 'count';
 }
@@ -498,6 +583,7 @@ function openHabitEditor(habit = null) {
     habitForm.name.value = habit.name;
     habitForm.kind.value = habit.kind;
     habitForm.budget.value = habit.weekly_budget;
+    habitForm.daily.value = habit.daily_limit ?? '';
     habitForm.unit.value = habit.unit || '';
     const swatch = habitForm.querySelector(`input[name=color][value="${habit.color}"]`);
     if (swatch) swatch.checked = true;
@@ -513,6 +599,8 @@ habitForm.addEventListener('submit', () => {
     name: String(data.get('name') || '').trim(),
     kind: String(data.get('kind')),
     weeklyBudget: Math.max(0, Number(data.get('budget')) || 0),
+    // Blank or zero means no daily limit rather than a limit of nothing.
+    dailyLimit: Number(data.get('daily')) > 0 ? Number(data.get('daily')) : null,
     unit: String(data.get('unit') || '').trim(),
     color: String(data.get('color') || COLORS[0]),
   };
@@ -524,23 +612,38 @@ habitForm.addEventListener('submit', () => {
   render();
 });
 
-/* ---------- amount sheet (money habits) ---------- */
+/* ---------- amount sheet (money cards, and manual logging) ---------- */
 
-function openAmountSheet(habit) {
+// `manual` is the “Log manually” path, shared by every kind: it adds a date
+// picker so an entry can be backdated. A money card tap opens the same sheet
+// without it, because tapping a card always means “now”.
+function openAmountSheet(habit, { manual = false } = {}) {
   amountId = habit.id;
+  amountManual = manual;
   amountForm.reset();
   $('#amount-title').textContent = habit.name;
-  $('#amount-label').textContent = `Amount (${currencySymbol()})`;
+  $('#amount-label').textContent =
+    habit.kind === 'time' ? 'Minutes'
+      : habit.kind === 'money' ? `Amount (${currencySymbol()})`
+        : `How many${habit.unit ? ` (${habit.unit})` : ''}`;
+  amountForm.amount.placeholder =
+    habit.kind === 'time' ? '30' : habit.kind === 'money' ? '0.00' : '1';
 
   const recent = store.recentAmounts(habit.id);
   $('#amount-quick').innerHTML = recent
-    .map((a) => `<button type="button" class="chip" data-amount="${a}">${escapeHtml(formatMoney(a))}</button>`)
+    .map((a) => `<button type="button" class="chip" data-amount="${a}">${escapeHtml(formatAmount(habit, a))}</button>`)
     .join('');
 
-  // Logging while looking at an earlier week lands the entry in that week,
-  // matching what the card above is showing.
+  // The date defaults to the week on screen: today when that is this week,
+  // otherwise its last day, which is where a plain log would have landed.
+  const range = store.weekRange(weekOffset);
+  $('#amount-date-field').hidden = !manual;
+  amountForm.date.value = toDateInput(weekOffset === 0 ? Date.now() : range.endMs - 1);
+
+  // With a date picker on screen the week is whatever it says, so the hint
+  // only has something to add when logging is pinned to the viewed week.
   $('#amount-hint').textContent =
-    weekOffset === 0 ? '' : `Logs into ${store.formatWeekRange(store.weekRange(weekOffset))}.`;
+    manual || weekOffset === 0 ? '' : `Logs into ${store.formatWeekRange(range)}.`;
 
   amountDialog.showModal();
   setTimeout(() => amountForm.amount.focus(), 60);
@@ -557,22 +660,35 @@ $('#amount-quick').addEventListener('click', (event) => {
 
 // Cancel and Escape both close without submitting; drop the pending habit so
 // it cannot leak into a later sheet.
-amountDialog.addEventListener('close', () => { amountId = null; });
+amountDialog.addEventListener('close', () => { amountId = null; amountManual = false; });
 
 amountForm.addEventListener('submit', () => {
   const habit = amountId ? store.getHabit(amountId) : null;
+  const manual = amountManual;
   amountId = null;
   if (!habit) return;
 
-  const amount = Number(new FormData(amountForm).get('amount'));
+  const data = new FormData(amountForm);
+  const amount = Number(data.get('amount'));
   if (!Number.isFinite(amount) || amount === 0) return;
 
   const range = store.weekRange(weekOffset);
-  store.addManualEntry(habit.id, amount, weekOffset === 0 ? Date.now() : range.endMs - 1);
+  const picked = manual ? fromDateInput(data.get('date')) : null;
+  // An empty or unparseable date falls back to the old behaviour rather than
+  // dropping the entry the user just typed.
+  const when = picked ?? (weekOffset === 0 ? Date.now() : range.endMs - 1);
+
+  const beforeToday = dayTotal(habit);
+  store.addManualEntry(habit.id, amount, when);
   buzz(10);
+  // A date outside the week on screen would log somewhere the user cannot
+  // see, so follow the entry to its week instead.
+  if (when < range.startMs || when >= range.endMs) weekOffset = store.weekOffsetOf(new Date(when));
   render();
   if (detailDialog.open) openDetail(habit.id);
-  toast(`Logged ${formatAmount(habit, amount)}`);
+  // A backdated entry cannot cross *today's* limit, so the two never collide.
+  const note = crossedDailyLimit(habit, beforeToday) ? dailyLimitNote(habit) : '';
+  toast(`Logged ${formatAmount(habit, amount)}${manual ? ` on ${formatDay(when)}` : ''}${note}`);
 });
 
 /* ---------- detail sheet ---------- */
@@ -584,8 +700,12 @@ function openDetail(id) {
   const used = store.usedInWeek(id, range);
 
   $('#detail-title').textContent = habit.name;
+  // The daily line is only true of the current week, where "today" is in view.
+  const daily = habit.daily_limit && weekOffset === 0
+    ? ` · today ${formatBare(habit, store.usedInDay(habit.id))} of ${formatAmount(habit, habit.daily_limit)}`
+    : '';
   $('#detail-summary').textContent =
-    `${formatAmount(habit, used)} of ${formatBudget(habit)} used · ${store.formatWeekRange(range)}`;
+    `${formatAmount(habit, used)} of ${formatBudget(habit)} used · ${store.formatWeekRange(range)}${daily}`;
 
   const entries = store.entriesForWeek(id, range);
   $('#detail-entries').innerHTML = entries.length
@@ -629,23 +749,9 @@ detailDialog.addEventListener('click', (event) => {
         toast('Habit deleted');
       }
       break;
-    case 'log-manual': {
-      if (habit.kind === 'money') {
-        openAmountSheet(habit);
-        return;
-      }
-      const label = habit.kind === 'time' ? 'How many minutes?' : 'How many to add?';
-      const input = prompt(label, habit.kind === 'time' ? '30' : '1');
-      const amount = Number(input);
-      if (!input || !Number.isFinite(amount) || amount === 0) return;
-      // Land the entry inside whichever week is on screen.
-      const range = store.weekRange(weekOffset);
-      const when = weekOffset === 0 ? Date.now() : range.endMs - 1;
-      store.addManualEntry(habit.id, amount, when);
-      openDetail(habit.id);
-      render();
+    case 'log-manual':
+      openAmountSheet(habit, { manual: true });
       break;
-    }
     case 'del-entry': {
       const id = Number(button.closest('[data-entry]').dataset.entry);
       store.deleteEntry(id);

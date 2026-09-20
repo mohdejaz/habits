@@ -335,6 +335,106 @@ await page.click('#week-next');
 await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
 check('cannot navigate past this week', await page.$eval('#week-next', (b) => b.disabled));
 
+// --- manual logging with a date ---
+await page.click('.card:nth-child(2) [data-act=detail]');
+await page.waitForSelector('#detail-dialog[open]');
+await page.click('[data-action="log-manual"]');
+await page.waitForSelector('#amount-dialog[open]');
+const manualSheet = await page.evaluate(() => ({
+  label: document.querySelector('#amount-label').textContent,
+  dateShown: !document.querySelector('#amount-date-field').hidden,
+  date: document.querySelector('#amount-form input[name=date]').value,
+}));
+const today = new Date();
+const pad = (n) => String(n).padStart(2, '0');
+const todayValue = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+check('manual sheet labels the count amount', manualSheet.label === 'How many (cups)', manualSheet.label);
+check('manual sheet offers a date, defaulting to today',
+  manualSheet.dateShown && manualSheet.date === todayValue, JSON.stringify(manualSheet));
+
+// Backdate into last week: the view should follow the entry there.
+const backdated = new Date(today.getTime() - 7 * 86400000);
+const backValue = `${backdated.getFullYear()}-${pad(backdated.getMonth() + 1)}-${pad(backdated.getDate())}`;
+await page.type('#amount-form input[name=amount]', '5');
+await page.$eval('#amount-form input[name=date]', (el, v) => {
+  el.value = v;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}, backValue);
+await page.click('#amount-form button[type=submit]');
+await page.waitForFunction(() => !document.querySelector('#amount-dialog').open);
+const afterManual = await page.evaluate(() => ({
+  week: document.querySelector('#week-title').textContent,
+  entries: document.querySelectorAll('#detail-entries li:not(.none)').length,
+  amount: document.querySelector('#detail-entries .amt')?.textContent,
+}));
+check('a backdated manual log lands in its own week',
+  afterManual.week === 'Last week' && afterManual.entries === 1 && afterManual.amount === '5 cups',
+  JSON.stringify(afterManual));
+
+// Put the fixture back: drop the backdated entry and return to this week.
+await page.click('#detail-entries [data-act=del-entry]');
+await page.waitForFunction(() => document.querySelector('#detail-entries .none'));
+await page.evaluate(() => document.querySelector('#detail-dialog').close());
+await page.click('#week-next');
+await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
+
+// --- per-day limits ---
+await page.click('.card:nth-child(2) [data-act=detail]');
+await page.waitForSelector('#detail-dialog[open]');
+await page.click('[data-action="edit-habit"]');
+await page.waitForSelector('#habit-dialog[open]');
+const dailyLabel = await page.$eval('#daily-label', (e) => e.textContent.trim());
+check('daily limit is labelled for the kind', dailyLabel === 'Daily limit (how many) (optional)', dailyLabel);
+await page.type('input[name=daily]', '2');
+await page.click('#habit-form button[type=submit]');
+await page.waitForFunction(() => !document.querySelector('.card:nth-child(2) [data-today]').hidden);
+
+const dayLine = () => page.$eval('.card:nth-child(2) [data-today]', (e) => ({
+  text: e.textContent, over: e.classList.contains('over'), hidden: e.hidden,
+}));
+let day = await dayLine();
+check('card shows today against the daily limit',
+  day.text === 'Today 2 of 2 cups' && !day.over, JSON.stringify(day));
+
+// The weekly budget (10 cups) still has room, so only the day line reacts.
+await page.click('.card:nth-child(2) [data-act=inc]');
+day = await dayLine();
+const warnToast = await page.$eval('#toast', (e) => e.textContent);
+const weekStillFine = await page.$eval('.card:nth-child(2)', (c) => c.classList.contains('over'));
+check('passing the daily limit flags the day, not the week',
+  day.over && day.text === 'Today 3 of 2 cups — over' && !weekStillFine,
+  JSON.stringify({ ...day, weekStillFine }));
+check('crossing the daily limit toasts once', warnToast === "Past today's 2 cups limit", warnToast);
+
+await new Promise((r) => setTimeout(r, 400)); // let the export reach IndexedDB
+await page.reload({ waitUntil: 'networkidle0' });
+await page.waitForSelector('.card');
+day = await dayLine();
+check('the daily limit survives a reload',
+  day.over && day.text === 'Today 3 of 2 cups — over', JSON.stringify(day));
+
+// An earlier week has no "today" to report.
+await page.click('#week-prev');
+await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'Last week');
+check('past weeks hide the daily line', (await dayLine()).hidden);
+await page.click('#week-next');
+await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
+
+// Put the fixture back: drop the extra cup and clear the limit again.
+await page.click('.card:nth-child(2) [data-act=dec]');
+await page.click('.card:nth-child(2) [data-act=detail]');
+await page.waitForSelector('#detail-dialog[open]');
+const detailSummary = await page.$eval('#detail-summary', (e) => e.textContent);
+check('detail summary reports the day too', / · today 2 of 2 cups$/.test(detailSummary), detailSummary);
+await page.click('[data-action="edit-habit"]');
+await page.waitForSelector('#habit-dialog[open]');
+const keptLimit = await page.$eval('input[name=daily]', (e) => e.value);
+check('the editor reopens with the stored limit', keptLimit === '2', keptLimit);
+await page.$eval('input[name=daily]', (e) => { e.value = ''; });
+await page.click('#habit-form button[type=submit]');
+await page.waitForFunction(() => document.querySelector('.card:nth-child(2) [data-today]').hidden);
+check('clearing the limit removes the daily line', true);
+
 // --- detail sheet + delete ---
 await page.click('.card:nth-child(2) [data-act=detail]');
 await page.waitForSelector('#detail-dialog[open]');

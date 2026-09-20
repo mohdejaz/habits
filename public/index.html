@@ -65,6 +65,11 @@
       <input name="budget" type="number" inputmode="decimal" min="0" step="any" required placeholder="180">
     </label>
 
+    <label class="field" id="daily-field">
+      <span id="daily-label">Daily limit (minutes) <em>(optional)</em></span>
+      <input name="daily" type="number" inputmode="decimal" min="0" step="any" placeholder="30">
+    </label>
+
     <label class="field" id="unit-field" hidden>
       <span>Unit name <em>(optional)</em></span>
       <input name="unit" type="text" maxlength="16" placeholder="cups" autocomplete="off">
@@ -82,7 +87,7 @@
   </form>
 </dialog>
 
-<!-- ---------- amount entry (money habits) ---------- -->
+<!-- ---------- amount entry (money cards, and manual logging) ---------- -->
 <dialog id="amount-dialog" class="sheet">
   <form method="dialog" id="amount-form">
     <div class="sheet-grip"></div>
@@ -93,6 +98,11 @@
              placeholder="0.00" autocomplete="off">
     </label>
     <div class="quick" id="amount-quick"></div>
+    <!-- Only manual logging picks a date; a card tap always means "now". -->
+    <label class="field" id="amount-date-field" hidden>
+      <span>Date</span>
+      <input name="date" type="date" autocomplete="off">
+    </label>
     <p class="hint" id="amount-hint"></p>
     <div class="sheet-actions">
       <button type="button" class="btn ghost" data-close>Cancel</button>

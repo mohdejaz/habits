@@ -4,7 +4,7 @@
 const IDB_NAME = 'habits-store';
 const IDB_STORE = 'files';
 const IDB_KEY = 'habits.db';
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 let SQL = null;   // the sql.js module
 let db = null;    // the open Database
@@ -106,6 +106,13 @@ const MIGRATIONS = [
   ALTER TABLE habits_new RENAME TO habits;
 
   PRAGMA foreign_keys = ON;
+  `,
+
+  // index 2 -> 3: an optional per-day limit alongside the weekly budget.
+  // NULL means the habit has no daily limit, which is what every existing
+  // row gets, so the column can simply be appended.
+  `
+  ALTER TABLE habits ADD COLUMN daily_limit REAL;
   `,
 ];
 

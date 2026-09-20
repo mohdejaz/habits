@@ -9,6 +9,7 @@
   --muted: #9aa3b5;
   --accent: #5b8def;
   --danger: #f2555a;
+  --warn: #f2a33c;
   --ok: #3ec98a;
   --radius: 16px;
   --safe-b: env(safe-area-inset-bottom, 0px);
@@ -23,6 +24,7 @@
     --line: #dde2ec;
     --text: #131722;
     --muted: #626c80;
+    --warn: #b0700f;  /* the dark-mode amber is too pale on white */
   }
 }
 
@@ -165,6 +167,15 @@ body {
 }
 .card.over .bar > i { background: var(--danger); }
 
+/* the per-day limit, shown under the weekly bar only when one is set */
+.today {
+  margin: -4px 0 9px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.today.over { color: var(--warn); font-weight: 600; }
+
 /* ---------- controls ---------- */
 
 .controls { display: flex; align-items: center; gap: 8px; }
@@ -274,6 +285,7 @@ body {
 .habits.compact .remaining .big { font-size: 19px; }
 .habits.compact .remaining .label { font-size: 11px; }
 .habits.compact .bar { height: 4px; margin: 5px 0 7px; }
+.habits.compact .today { margin: -3px 0 6px; font-size: 11px; }
 .habits.compact .controls,
 .habits.compact .stepper { gap: 6px; }
 .habits.compact .btn { min-height: 34px; padding: 0 12px; border-radius: 10px; font-size: 15px; }
@@ -346,6 +358,7 @@ body {
 .field em { font-style: normal; font-weight: 400; }
 .field input[type=text],
 .field input[type=number],
+.field input[type=date],
 .field select {
   width: 100%;
   min-height: 46px;

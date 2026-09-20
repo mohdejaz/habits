@@ -60,10 +60,21 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   There is no natural increment for money, so **Log spend** opens a sheet; the amounts
   you have used before appear as chips there and log again on a single tap. A negative
   amount is accepted, which is how you record a refund.
+- **Daily limits** are optional and sit alongside the weekly budget: set one in the
+  habit editor and the card gains a `Today 2 of 3 cups` line under the bar, which turns
+  amber once the day is over its limit. The day runs local midnight to local midnight,
+  so it resets with your day and not with UTC. Nothing is blocked — the log that
+  crosses the limit says so in a toast, and later logs stay quiet rather than nagging.
+  A limit only describes today, so the line is hidden while an earlier week is on
+  screen. Leaving the field blank (or zero) means no daily limit, which is what every
+  habit created before this feature has.
 - **Over budget** turns the card red and reports how far past you are instead of
-  clamping at zero.
+  clamping at zero. Passing a daily limit is a separate, softer state: the day line
+  goes amber and the weekly card is left alone.
 - Tap `⋯` on a card for this week's entries, manual logging, editing, hiding, and
-  deletion.
+  deletion. **Log manually** opens the amount sheet for any kind of habit, with a
+  date picker alongside the value so an entry can be backdated; the week view
+  follows the entry to whichever week the date falls in.
 - `‹` / `›` move between weeks. Past weeks are read-only for timers but still editable
   by hand.
 - **Reordering** is a press and hold on a card, then a drag. Holding for 300ms is what
@@ -89,12 +100,12 @@ Schema (`public/js/db.js`):
 
 | table | purpose |
 |---|---|
-| `habits` | name, `kind` (`time`\|`count`\|`money`), `weekly_budget`, unit label, colour, `sort_order`, `archived` |
+| `habits` | name, `kind` (`time`\|`count`\|`money`), `weekly_budget`, `daily_limit` (nullable), unit label, colour, `sort_order`, `archived` |
 | `entries` | one row per logged session or tap: `amount`, `started_at`, `ended_at` |
 | `timers` | at most one row per habit — a timer that is currently running |
 | `meta` | settings: week start day, currency, compact cards |
 
-`weekly_budget` and `amount` share one unit per kind — minutes, whole units, or major
+`weekly_budget`, `daily_limit` and `amount` share one unit per kind — minutes, whole units, or major
 currency units (`12.5` is £12.50) — so a budget can be compared to a sum directly.
 
 Migrations are a list of SQL strings gated on `PRAGMA user_version`; append one to

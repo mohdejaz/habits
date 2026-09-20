@@ -81,6 +81,13 @@ export function weekRange(offset = 0) {
   return { start, end, startMs: start.getTime(), endMs: end.getTime() };
 }
 
+// Which week view holds `date`: 0 = this week, -1 = last week, and so on.
+// Weeks are a whole number of days apart, so rounding absorbs any DST hour.
+export function weekOffsetOf(date) {
+  const diff = weekStart(date).getTime() - weekStart(new Date()).getTime();
+  return Math.round(diff / (7 * 86400000));
+}
+
 export function formatWeekRange({ start, end }) {
   const last = new Date(end.getTime() - 1);
   const sameMonth = start.getMonth() === last.getMonth();
@@ -90,6 +97,17 @@ export function formatWeekRange({ start, end }) {
     sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' }
   );
   return `${fmtStart} – ${fmtEnd}`;
+}
+
+/* ---------- days ---------- */
+
+// Local midnight to local midnight, so a daily limit resets when the user's
+// day does rather than at UTC midnight.
+export function dayRange(date = new Date()) {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end, startMs: start.getTime(), endMs: end.getTime() };
 }
 
 /* ---------- habits ---------- */
@@ -104,20 +122,21 @@ export function getHabit(id) {
   return db.one('SELECT * FROM habits WHERE id = ?', [id]);
 }
 
-export function createHabit({ name, kind, weeklyBudget, unit, color }) {
+// `dailyLimit` is optional: null means the habit is only capped by the week.
+export function createHabit({ name, kind, weeklyBudget, dailyLimit = null, unit, color }) {
   const next = db.one('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM habits');
   db.run(
-    `INSERT INTO habits (name, kind, weekly_budget, unit, color, sort_order, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [name.trim(), kind, weeklyBudget, unit || null, color, next.n, Date.now()]
+    `INSERT INTO habits (name, kind, weekly_budget, daily_limit, unit, color, sort_order, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name.trim(), kind, weeklyBudget, dailyLimit, unit || null, color, next.n, Date.now()]
   );
   return db.lastInsertId();
 }
 
-export function updateHabit(id, { name, weeklyBudget, unit, color }) {
+export function updateHabit(id, { name, weeklyBudget, dailyLimit = null, unit, color }) {
   db.run(
-    'UPDATE habits SET name = ?, weekly_budget = ?, unit = ?, color = ? WHERE id = ?',
-    [name.trim(), weeklyBudget, unit || null, color, id]
+    'UPDATE habits SET name = ?, weekly_budget = ?, daily_limit = ?, unit = ?, color = ? WHERE id = ?',
+    [name.trim(), weeklyBudget, dailyLimit, unit || null, color, id]
   );
 }
 
@@ -175,6 +194,15 @@ export function usageForWeek(range) {
     [range.startMs, range.endMs]
   );
   return new Map(rows.map((r) => [r.habit_id, r.total]));
+}
+
+// The same sums over one day, for habits that also carry a daily limit.
+export function usedInDay(habitId, range = dayRange()) {
+  return usedInWeek(habitId, range);
+}
+
+export function usageForDay(range = dayRange()) {
+  return usageForWeek(range);
 }
 
 export function entriesForWeek(habitId, range) {
