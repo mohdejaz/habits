@@ -1,11 +1,19 @@
 # Habit Budget
 
-A phone-first PWA for keeping habits inside a **weekly budget** — an amount of time
-(with a stopwatch), a number of things (with + / − buttons), or an amount of money
-(logged from a sheet). Everything runs offline: SQLite is compiled to WebAssembly
-and the database file lives in the browser, so there is no server and no account.
+A phone-first PWA for keeping habits inside a **weekly budget** — an amount of
+time, a number of things, or an amount of money.
 
-<!-- screens: week view, running timer, habit editor -->
+The week is a grid: the days down the side, the habits across. The day column is
+frozen and the habits scroll sideways under it, so a week stays labelled however
+many habits there are. Tap any cell to log an amount for that habit on that day,
+so recording Tuesday's coffees on Thursday is the same gesture as recording
+today's. The whole week is one picture — where the budget has gone, and which
+days it went on.
+
+Everything runs offline: SQLite is compiled to WebAssembly and the database file
+lives in the browser, so there is no server and no account.
+
+<!-- screens: the week grid, a day sheet, habit editor -->
 
 ## Running it
 
@@ -50,43 +58,56 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
 - **Budgets are weekly.** A week starts on Monday by default (changeable in Settings).
   Usage is the sum of entries whose timestamp falls in that week, so the budget resets
   on its own — nothing needs to run in the background.
-- **Time habits** store minutes. Start the stopwatch and the card shows elapsed time
-  alongside the remaining budget counting down live. The running timer is a row in the
-  `timers` table, not a JS variable, which is why closing the app does not lose it.
-- **Count habits** store whole units. `+` appends an entry; `−` removes the most recent
-  entry of the week rather than writing a negative number, so the log stays honest.
+- **Tapping a cell** opens the day sheet: the habit and the date are already
+  decided by the cell, so it only has to answer *how much*. That is the whole of
+  logging, and it is why backdating no longer needs a date picker — the grid is
+  the date picker. Days that have not happened yet are inert, because logging
+  into one is a mis-tap rather than an intention.
+- **Time habits** store minutes. The day sheet for the day still in progress
+  offers the stopwatch; while it runs, today's cell ticks with a pulsing dot and
+  the weekly budget counts down live. The running timer is a row in the `timers`
+  table, not a JS variable, which is why closing the app does not lose it.
+- **Count habits** store whole units. The day sheet keeps a `−  3  +` stepper
+  that writes on the tap, so one more coffee is two taps rather than a form.
+  `−` removes the most recent entry *of that day* rather than writing a negative
+  number, so the log stays honest — and it removes the whole entry, so undoing a
+  "3" takes all three.
 - **Money habits** store amounts in the currency set in Settings — one currency for
   the whole app, since mixing them would mean exchange rates and those need a network.
-  There is no natural increment for money, so **Log spend** opens a sheet; the amounts
-  you have used before appear as chips there and log again on a single tap. A negative
-  amount is accepted, which is how you record a refund.
-- **Daily limits** are optional and sit alongside the weekly budget: set one in the
-  habit editor and the card gains a `Today 2 of 3 cups` line under the bar, which turns
-  amber once the day is over its limit. The day runs local midnight to local midnight,
-  so it resets with your day and not with UTC. Nothing is blocked — the log that
-  crosses the limit says so in a toast, and later logs stay quiet rather than nagging.
-  A limit only describes today, so the line is hidden while an earlier week is on
-  screen. Leaving the field blank (or zero) means no daily limit, which is what every
-  habit created before this feature has.
-- **Over budget** turns the card red and reports how far past you are instead of
-  clamping at zero. Passing a daily limit is a separate, softer state: the day line
-  goes amber and the weekly card is left alone.
-- Tap `⋯` on a card for this week's entries, manual logging, editing, hiding, and
-  deletion. **Log manually** opens the amount sheet for any kind of habit, with a
-  date picker alongside the value so an entry can be backdated; the week view
-  follows the entry to whichever week the date falls in.
-- `‹` / `›` move between weeks. Past weeks are read-only for timers but still editable
-  by hand.
-- **Reordering** is a press and hold on a card, then a drag. Holding for 300ms is what
-  separates a reorder from a scroll — moving before that cancels it — and dragging to
-  the edge of the screen scrolls the list. The order is stored in `habits.sort_order`.
-- **Hiding** a habit (`⋯` → Hide) keeps every entry and only drops it out of the week
-  view; Settings lists what is hidden and puts it back. A running timer is stopped and
+  The amounts you have used before appear as chips in the day sheet and log again on
+  a single tap. A negative amount is accepted, which is how you record a refund.
+- **Cells are tinted with the habit's own colour**, so a week reads as a pattern
+  before any of the numbers do. Because the columns scroll rather than being
+  squeezed onto one screen, they are wide enough for the real formatting —
+  `$12.50` and `1h 30m`, not an abbreviation of them — and for type you can
+  read at arm's length. A count drops its unit, since the column is already
+  headed with the habit's name.
+- **Daily limits** are what the grid is best at. Set one in the habit editor and
+  any day over it goes amber — every day, not just today, and on any week you
+  scroll back to. The day runs local midnight to local midnight, so it resets
+  with your day and not with UTC. Nothing is blocked: the log that crosses the
+  limit says so in a toast, and later logs stay quiet rather than nagging.
+  Leaving the field blank (or zero) means no daily limit.
+- **Over budget** turns the habit's column header red and reports how far past
+  you are instead of clamping at zero. Passing a daily limit is a separate,
+  softer state: the cell goes amber and the column is left alone.
+- **Tap a habit's name** for this week's entries, editing, hiding and deletion.
+- `‹` / `›` move between weeks. An earlier week has no "today", so every one of
+  its days is editable and none of them is marked.
+- **Reordering** is a press and hold on the habit's *name*, then a drag
+  sideways. The cells are targets in their own right, so only the name is a
+  handle. Holding for 300ms is what separates a reorder from a scroll — moving
+  before that cancels it, on either axis, since the habits scroll horizontally
+  and the page scrolls vertically — and dragging to the edge of the strip
+  scrolls it. The order is stored in `habits.sort_order`, which is why hiding
+  and unhiding a habit puts it back where it was rather than on the end.
+- **Hiding** a habit keeps every entry and only drops its column out of the week;
+  Settings lists what is hidden and puts it back. A running timer is stopped and
   logged on the way out, so nothing keeps ticking where you cannot see it. This is
   `habits.archived`, and it is the honest alternative to deleting a habit you have
   stopped tracking but do not want to erase.
-- **Compact** (Settings → Cards) tightens padding and type without dropping anything,
-  so a habit can still be logged from the list rather than through a sheet.
+- **Compact** (Settings → Cards) narrows the columns and the day labels without
+  dropping a day, so more habits fit before anything has to be scrolled to.
 
 ## Your data
 
@@ -108,6 +129,14 @@ Schema (`public/js/db.js`):
 `weekly_budget`, `daily_limit` and `amount` share one unit per kind — minutes, whole units, or major
 currency units (`12.5` is £12.50) — so a budget can be compared to a sum directly.
 
+Entries carry a timestamp, not a day number, so which column an entry lands in
+is worked out at render time from the local calendar. `store.weekDays()` builds
+the seven local midnight-to-midnight boundaries by date arithmetic rather than
+by adding 24 hours seven times — the week containing a DST change has a 23- and
+a 25-hour day in it, and flooring by 86400000 would file them under the wrong
+column. An entry logged into a day that is not today lands at midday, far enough
+from both edges that a DST shift cannot slide it into a neighbouring day.
+
 Migrations are a list of SQL strings gated on `PRAGMA user_version`; append one to
 `MIGRATIONS` and bump `SCHEMA_VERSION` to change the schema. Rebuilding a table (as
 the `money` migration does, since SQLite cannot alter a CHECK constraint) has to
@@ -120,8 +149,10 @@ public/            the entire app — deploy this directory
   index.html       shell + dialogs
   css/app.css
   js/db.js         SQLite over IndexedDB: open, save, migrate, import/export
-  js/store.js      habits, entries, timers, week maths
-  js/app.js        rendering and interaction
+  js/store.js      habits, entries, timers, week and day maths
+  js/app.js        the grid, the day sheet, and the rest of the interaction
+                   (the frozen day column is one element, each habit another —
+                    which is what makes a column draggable as a unit)
   sw.js            precaches the shell for offline use
   vendor/          sql.js wasm build (npm run sync-sqljs to refresh)
 tools/serve.mjs    dev server
@@ -134,10 +165,14 @@ tools/e2e.mjs      browser test suite
 
 ```bash
 npm start          # in one terminal
-node tools/e2e.mjs # drives real Chrome: budgets for all three kinds, timer
-                   # persistence, drag-to-reorder, hide/unhide, compact cards,
-                   # offline load, export/import round-trip, and upgrading a
-                   # database written before money existed
+node tools/e2e.mjs # drives real Chrome: budgets for all three kinds, logging
+                   # into any day of the week (including an earlier one), daily
+                   # limits colouring the day and not the week, the day column
+                   # staying frozen while the habits scroll, timer persistence,
+                   # sideways drag-to-reorder by the name, that holding a cell
+                   # never drags its column, compact columns, offline load,
+                   # export/import round-trip, and upgrading a database written
+                   # before money existed
 ```
 
 Needs Google Chrome installed at the usual macOS path.

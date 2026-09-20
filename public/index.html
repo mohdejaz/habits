@@ -29,7 +29,14 @@
   </button>
 </header>
 
-<main id="habit-list" class="habits" aria-live="polite"></main>
+<!-- The days down the side, the habits across. The day column is frozen and
+     the habits scroll under it, so a week stays labelled however many habits
+     there are. Each habit is one element — its name and its seven cells —
+     which is also what makes a column draggable as a unit. -->
+<div class="grid" id="grid">
+  <div class="daycol" id="daycol"></div>
+  <main id="habit-list" class="habits" aria-live="polite"></main>
+</div>
 
 <div id="empty" class="empty" hidden>
   <div class="empty-mark">◔</div>
@@ -87,25 +94,34 @@
   </form>
 </dialog>
 
-<!-- ---------- amount entry (money cards, and manual logging) ---------- -->
-<dialog id="amount-dialog" class="sheet">
-  <form method="dialog" id="amount-form">
-    <div class="sheet-grip"></div>
-    <h2 id="amount-title">Log spend</h2>
+<!-- ---------- logging one day ----------
+     Opened by tapping a cell, so the day is already decided; the sheet only
+     has to answer "how much". -->
+<dialog id="day-dialog" class="sheet">
+  <div class="sheet-grip"></div>
+  <h2 id="day-title">Habit</h2>
+  <p id="day-sub" class="detail-summary"></p>
+
+  <!-- Count habits keep their stepper: it writes on the tap, so logging a
+       coffee stays two taps rather than a form. -->
+  <div class="stepper" id="day-step" hidden>
+    <button class="step-btn" type="button" data-act="day-dec" aria-label="Remove one">−</button>
+    <div class="tally"><span id="day-tally">0</span><small>logged</small></div>
+    <button class="step-btn plus" type="button" data-act="day-inc" aria-label="Add one">+</button>
+  </div>
+
+  <!-- A stopwatch only makes sense on the day that is still happening. -->
+  <button class="btn timer-btn" type="button" id="day-timer" data-act="day-timer" hidden>Start timer</button>
+
+  <form method="dialog" id="day-form">
     <label class="field">
-      <span id="amount-label">Amount</span>
-      <input name="amount" type="number" inputmode="decimal" step="any" required
-             placeholder="0.00" autocomplete="off">
+      <span id="day-amount-label">Amount</span>
+      <input name="amount" type="number" inputmode="decimal" step="any"
+             placeholder="0" autocomplete="off">
     </label>
-    <div class="quick" id="amount-quick"></div>
-    <!-- Only manual logging picks a date; a card tap always means "now". -->
-    <label class="field" id="amount-date-field" hidden>
-      <span>Date</span>
-      <input name="date" type="date" autocomplete="off">
-    </label>
-    <p class="hint" id="amount-hint"></p>
+    <div class="quick" id="day-quick"></div>
     <div class="sheet-actions">
-      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="button" class="btn ghost" data-close>Done</button>
       <button type="submit" class="btn primary">Add</button>
     </div>
   </form>
@@ -118,7 +134,6 @@
   <p id="detail-summary" class="detail-summary"></p>
   <div class="detail-tools">
     <button class="btn ghost" data-action="edit-habit">Edit</button>
-    <button class="btn ghost" data-action="log-manual">Log manually</button>
     <button class="btn ghost" data-action="hide-habit">Hide</button>
     <button class="btn danger-ghost" data-action="delete-habit">Delete</button>
   </div>

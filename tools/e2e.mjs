@@ -1,3 +1,9 @@
+// e2e.mjs — drives real Chrome against the real app.
+//
+// The app is a grid: the days down the side, habits across in a horizontally
+// scrolling strip under a frozen day column. Almost every test goes through a
+// cell, because that is how everything is logged now.
+
 import puppeteer from 'puppeteer-core';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -23,169 +29,313 @@ const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => m.type() === 'error' && errors.push('console: ' + m.text()));
 
+// A thrown step would otherwise take the whole report with it, leaving a stack
+// trace and no idea how far the suite got.
+function report() {
+  console.log('\nPASS:');
+  ok.forEach((s) => console.log('  ✓ ' + s));
+  if (bad.length) { console.log('\nFAIL:'); bad.forEach((s) => console.log('  ✗ ' + s)); }
+  if (errors.length) { console.log('\nPAGE ERRORS:'); errors.forEach((e) => console.log('  ! ' + e)); }
+}
+process.on('uncaughtException', (err) => {
+  console.log(`\nCRASHED: ${err?.message || err}`);
+  report();
+  process.exit(1);
+});
+process.on('unhandledRejection', (err) => {
+  console.log(`\nCRASHED: ${err?.message || err}`);
+  report();
+  process.exit(1);
+});
+
 await page.goto('http://localhost:4173/', { waitUntil: 'networkidle0' });
 await page.waitForSelector('#empty:not([hidden])', { timeout: 10000 });
 check('boots to empty state', true);
 
-// --- create a time habit ---
+/* ---------- helpers ---------- */
+
+const colState = (n) => page.$eval(`.hcol:nth-child(${n})`, (el) => ({
+  name: el.querySelector('.hcol-name').textContent,
+  left: el.querySelector('[data-left]').textContent,
+  bar: el.querySelector('[data-bar]').style.width,
+  over: el.classList.contains('over'),
+  running: el.classList.contains('running'),
+  cells: [...el.querySelectorAll('[data-cell]')].map((c) => ({
+    text: c.textContent,
+    over: c.classList.contains('over'),
+    logged: c.classList.contains('logged'),
+    future: c.hasAttribute('disabled'),
+    ticking: c.classList.contains('ticking'),
+  })),
+}));
+
+const colNames = () => page.$$eval('.hcol-name', (n) => n.map((x) => x.textContent));
+
+// Which column is today, so the timer and "future" tests know where to look.
+const todayIndex = () => page.evaluate(async () => {
+  const store = await import('./js/store.js');
+  return store.dayIndexOf(Date.now(), store.weekDays(store.weekRange(0)));
+});
+
+const openCell = async (col, day) => {
+  // Scroll it into the strip first: a column past the fold is not clickable.
+  await page.$eval(`.hcol:nth-child(${col})`, (e) => e.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+  await page.click(`.hcol:nth-child(${col}) .cell[data-day="${day}"]`);
+  await page.waitForSelector('#day-dialog[open]');
+};
+const closeSheet = async (id = '#day-dialog') => {
+  await page.evaluate((sel) => document.querySelector(sel).close(), id);
+  await page.waitForFunction((sel) => !document.querySelector(sel).open, {}, id);
+};
+
+const addHabit = async ({ name, kind = 'time', budget, daily, unit }) => {
+  await page.click('#fab');
+  await page.waitForSelector('#habit-dialog[open]');
+  await page.type('input[name=name]', name);
+  if (kind !== 'time') await page.click(`input[name=kind][value=${kind}]`);
+  await page.type('input[name=budget]', String(budget));
+  if (daily !== undefined) await page.type('input[name=daily]', String(daily));
+  if (unit) await page.type('input[name=unit]', unit);
+  await page.click('#habit-form button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('#habit-dialog').open);
+};
+
+/* ---------- the grid itself ---------- */
+
 await page.click('[data-action="add-habit"]');
 await page.waitForSelector('#habit-dialog[open]');
 await page.type('input[name=name]', 'Reading');
 await page.type('input[name=budget]', '180');
 await page.click('#habit-form button[type=submit]');
-await page.waitForSelector('.card');
+await page.waitForSelector('.hcol');
 
-// --- create a count habit ---
-await page.click('#fab');
-await page.waitForSelector('#habit-dialog[open]');
-await page.type('input[name=name]', 'Coffee');
-await page.click('input[name=kind][value=count]');
-await page.type('input[name=budget]', '10');
-await page.type('input[name=unit]', 'cups');
-await page.click('#swatches label:nth-child(3) input');
-await page.click('#habit-form button[type=submit]');
-await page.waitForFunction(() => document.querySelectorAll('.card').length === 2);
-check('creates time + count habits', true);
+await addHabit({ name: 'Coffee', kind: 'count', budget: 14, daily: 2, unit: 'cups' });
+await page.waitForFunction(() => document.querySelectorAll('.hcol').length === 2);
+check('habits become columns', (await colNames()).join(',') === 'Reading,Coffee', JSON.stringify(await colNames()));
 
-const read = () => page.$$eval('.card', (cards) => cards.map((c) => ({
-  name: c.querySelector('.card-name').textContent,
-  remaining: c.querySelector('[data-remaining]').textContent,
-  label: c.querySelector('[data-remaining-label]').textContent,
-  tally: c.querySelector('.tally')?.firstChild.textContent,
-  spent: c.querySelector('[data-spent]')?.textContent,
-  running: c.classList.contains('running'),
-  over: c.classList.contains('over'),
-  bar: c.querySelector('[data-bar]').style.width,
-})));
+check('every habit column has seven days', (await colState(1)).cells.length === 7);
+check('the frozen column names the week\'s days', await page.evaluate(async () => {
+  const store = await import('./js/store.js');
+  const days = store.weekDays(store.weekRange(0));
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const labels = [...document.querySelectorAll('.dlabel')];
+  return labels.length === 7 && labels.every((el, i) =>
+    el.querySelector('.dow').textContent === names[days[i].start.getDay()]
+    && el.querySelector('.dom').textContent === String(days[i].start.getDate()));
+}));
 
-let cards = await read();
-check('time budget shows 3h left', cards[0].remaining === '3h' && cards[0].label === 'left of 3h', JSON.stringify(cards[0]));
-check('count budget shows 10 cups left', cards[1].remaining === '10 cups', JSON.stringify(cards[1]));
+const today = await todayIndex();
+check('today\'s row is marked', await page.evaluate((i) =>
+  document.querySelectorAll('.dlabel')[i].classList.contains('today'), today));
 
-// --- count: + and - ---
-for (let i = 0; i < 3; i++) await page.click('.card:nth-child(2) [data-act=inc]');
-cards = await read();
-check('three taps of + log 3', cards[1].tally === '3' && cards[1].remaining === '7 cups', JSON.stringify(cards[1]));
-check('progress bar tracks usage', cards[1].bar === '30%', cards[1].bar);
+// The point of the layout: the days stay put while the habits scroll past.
+check('the day column is frozen and the habits scroll', await page.evaluate(() => {
+  const grid = document.querySelector('#grid');
+  const col = document.querySelector('.daycol');
+  return getComputedStyle(col).position === 'sticky'
+    && getComputedStyle(grid).overflowX === 'auto';
+}));
+check('days that have not happened are inert', await page.evaluate((i) => {
+  const cells = [...document.querySelectorAll('.hcol:nth-child(1) [data-cell]')];
+  return cells.every((c, n) => c.hasAttribute('disabled') === (n > i));
+}, today));
 
-await page.click('.card:nth-child(2) [data-act=dec]');
-cards = await read();
-check('minus undoes one', cards[1].tally === '2' && cards[1].remaining === '8 cups', JSON.stringify(cards[1]));
+check('a fresh habit shows its whole budget', (await colState(1)).left === '3h left', (await colState(1)).left);
+check('a count habit reads in its own unit', (await colState(2)).left === '14 cups left', (await colState(2)).left);
 
-// --- money: currency setting, spend sheet, quick repeat, overage ---
-await page.click('#open-settings');
-await page.waitForSelector('#settings-dialog[open]');
-await page.select('#currency-select', 'GBP');
-await page.evaluate(() => document.querySelector('#settings-dialog').close());
+/* ---------- logging into a day ---------- */
 
-await page.click('#fab');
-await page.waitForSelector('#habit-dialog[open]');
-await page.type('input[name=name]', 'Takeaway');
-await page.click('input[name=kind][value=money]');
-const budgetLabel = await page.$eval('#budget-label', (e) => e.textContent);
-check('budget label follows the currency', budgetLabel === 'Weekly budget (£)', budgetLabel);
-const unitShown = await page.$eval('#unit-field', (e) => e.getBoundingClientRect().height > 0);
-check('money habits hide the unit field', !unitShown);
-await page.click('input[name=kind][value=count]');
-const unitShownForCount = await page.$eval('#unit-field', (e) => e.getBoundingClientRect().height > 0);
-check('count habits still show the unit field', unitShownForCount);
-await page.click('input[name=kind][value=money]');
-await page.type('input[name=budget]', '40');
-await page.click('#habit-form button[type=submit]');
-await page.waitForFunction(() => document.querySelectorAll('.card').length === 3);
+// Monday, whatever day it is today: backdating is a tap now, not a date picker.
+await openCell(2, 0);
+check('the sheet names the habit and the day', await page.evaluate(async () => {
+  const store = await import('./js/store.js');
+  const day = store.weekDays(store.weekRange(0))[0].start;
+  const when = day.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
+  return document.querySelector('#day-title').textContent === 'Coffee'
+    && document.querySelector('#day-sub').textContent === `${when} · 0 cups logged · limit 2 cups`;
+}), await page.$eval('#day-sub', (e) => e.textContent));
 
-cards = await read();
-check('money budget renders as currency', cards[2].remaining === '£40.00' && cards[2].label === 'left of £40.00', JSON.stringify(cards[2]));
+await page.click('[data-act="day-inc"]');
+await page.click('[data-act="day-inc"]');
+await page.waitForFunction(() => document.querySelector('#day-tally').textContent === '2');
+check('the stepper writes on the tap', (await colState(2)).cells[0].text === '2', JSON.stringify((await colState(2)).cells[0]));
+check('the grid keeps up behind the sheet', (await colState(2)).left === '12 cups left', (await colState(2)).left);
 
-const logSpend = async (value) => {
-  await page.click('.card:nth-child(3) [data-act=spend]');
-  await page.waitForSelector('#amount-dialog[open]');
-  await page.type('#amount-form input[name=amount]', value);
-  await page.click('#amount-form button[type=submit]');
-  await page.waitForFunction(() => !document.querySelector('#amount-dialog').open);
-};
+await page.click('[data-act="day-dec"]');
+await page.waitForFunction(() => document.querySelector('#day-tally').textContent === '1');
+check('minus takes one back off', (await colState(2)).cells[0].text === '1', JSON.stringify((await colState(2)).cells[0]));
 
-await logSpend('12.50');
-cards = await read();
-check(
-  'logging a spend updates the card',
-  cards[2].spent === '£12.50' && cards[2].remaining === '£27.50' && cards[2].bar === '31.25%',
-  JSON.stringify(cards[2])
-);
+// Typing an amount adds that many at once, for the days you log in arrears.
+await page.type('#day-form input[name=amount]', '4');
+await page.click('#day-form button[type=submit]');
+await page.waitForFunction(() => !document.querySelector('#day-dialog').open);
+check('an amount can be typed instead', (await colState(2)).cells[0].text === '5', JSON.stringify((await colState(2)).cells[0]));
+check('the week total follows the days', (await colState(2)).left === '9 cups left', (await colState(2)).left);
+// The browser rounds the width it stores, so this compares numerically.
+check('the bar tracks usage',
+  Math.abs(parseFloat((await colState(2)).bar) - (5 / 14) * 100) < 0.01, (await colState(2)).bar);
 
-// the sheet offers the last amount back as a one-tap repeat
-await page.click('.card:nth-child(3) [data-act=spend]');
-await page.waitForSelector('#amount-dialog[open]');
-const chips = await page.$$eval('#amount-quick .chip', (c) => c.map((x) => x.textContent));
-check('recent amount offered as a chip', chips.length === 1 && chips[0] === '£12.50', JSON.stringify(chips));
-await page.click('#amount-quick .chip');
-await page.waitForFunction(() => !document.querySelector('#amount-dialog').open);
-cards = await read();
-check('tapping a chip logs it again', cards[2].spent === '£25.00' && cards[2].remaining === '£15.00', JSON.stringify(cards[2]));
-await page.screenshot({ path: `${SP}/shot-money.png` });
+/* ---------- daily limits ---------- */
 
-await logSpend('20');
-cards = await read();
-check(
-  'money over budget reports the overage',
-  cards[2].over && cards[2].remaining === '£5.00' && /over your £40\.00 budget/.test(cards[2].label),
-  JSON.stringify(cards[2])
-);
+const mondayCell = async () => (await colState(2)).cells[0];
+check('a day past its limit goes amber', (await mondayCell()).over, JSON.stringify(await mondayCell()));
+check('a day past its limit leaves the week alone', !(await colState(2)).over);
 
-// entries survive as ordinary rows, so history and delete work as elsewhere
-await page.click('.card:nth-child(3) [data-act=detail]');
+await openCell(2, 1);
+await page.click('[data-act="day-inc"]');
+await page.click('[data-act="day-inc"]');
+await page.click('[data-act="day-inc"]');
+await page.waitForFunction(() => document.querySelector('#day-tally').textContent === '3');
+const limitToast = await page.$eval('#toast', (t) => t.textContent);
+check('crossing the limit says so once', /Past that day's 2 cups limit/.test(limitToast), limitToast);
+check('the sheet flags the day it is over', await page.$eval('#day-sub', (e) => e.classList.contains('over')));
+await closeSheet();
+
+check('a day inside its limit stays plain', !(await colState(2)).cells[2].over);
+
+/* ---------- money ---------- */
+
+await addHabit({ name: 'Takeaway', kind: 'money', budget: 40 });
+await page.waitForFunction(() => document.querySelectorAll('.hcol').length === 3);
+check('money shows the currency in the row', (await colState(3)).left === '$40.00 left', (await colState(3)).left);
+
+await openCell(3, 1);
+check('money has no stepper', await page.$eval('#day-step', (e) => e.hidden));
+await page.type('#day-form input[name=amount]', '12.5');
+await page.click('#day-form button[type=submit]');
+await page.waitForFunction(() => !document.querySelector('#day-dialog').open);
+// The wider column has room for the real formatting, symbol and all.
+check('a money cell is written in full', (await colState(3)).cells[1].text === '$12.50', JSON.stringify((await colState(3)).cells[1]));
+check('the row still spells the currency out', (await colState(3)).left === '$27.50 left', (await colState(3)).left);
+
+await openCell(3, 2);
+const chips = await page.$$eval('#day-quick .chip', (c) => c.map((x) => x.textContent));
+check('a used amount is offered again as a chip', chips.join(',') === '$12.50', JSON.stringify(chips));
+await page.click('#day-quick .chip');
+await page.waitForFunction(() => !document.querySelector('#day-dialog').open);
+check('tapping a chip logs it', (await colState(3)).cells[2].text === '$12.50', JSON.stringify((await colState(3)).cells[2]));
+
+await openCell(3, 3);
+await page.type('#day-form input[name=amount]', '20');
+await page.click('#day-form button[type=submit]');
+await page.waitForFunction(() => !document.querySelector('#day-dialog').open);
+const over = await colState(3);
+check('over budget turns the row red and reports the overage',
+  over.over && over.left === '$5.00 over', JSON.stringify(over));
+
+/* ---------- the stopwatch ---------- */
+
+await openCell(1, today);
+check('the stopwatch is offered on the day still happening', !(await page.$eval('#day-timer', (e) => e.hidden)));
+await page.click('#day-timer');
+await page.waitForFunction(() => document.querySelector('.hcol:nth-child(1)').classList.contains('running'));
+await closeSheet();
+// Long enough to clear the few-second floor under which a session is treated
+// as a misfire and dropped.
+await new Promise((r) => setTimeout(r, 4200));
+// Under a minute the cell counts in seconds, which is the honest reading of
+// a stopwatch that has only just been started.
+check('the running timer ticks in today\'s cell', (await colState(1)).cells[today].ticking
+  && /^\d+[sm]$/.test((await colState(1)).cells[today].text), JSON.stringify((await colState(1)).cells[today]));
+
+await page.reload({ waitUntil: 'networkidle0' });
+await page.waitForSelector('.hcol');
+check('a running timer survives a reload', (await colState(1)).running);
+
+await openCell(1, today);
+check('the sheet offers to stop it', /Stop timer/.test(await page.$eval('#day-timer', (e) => e.textContent)));
+await page.click('#day-timer');
+await page.waitForFunction(() => !document.querySelector('.hcol:nth-child(1)').classList.contains('running'));
+await closeSheet();
+check('stopping logs the elapsed minutes into that day', await page.evaluate(async () => {
+  const store = await import('./js/store.js');
+  const id = store.listHabits().find((h) => h.name === 'Reading').id;
+  return !store.runningTimers().has(id) && store.usedInWeek(id, store.weekRange(0)) > 0;
+}), JSON.stringify((await colState(1)).cells[today]));
+
+// Earlier days cannot be timed — there is nothing still running about them.
+await openCell(1, 0);
+check('an earlier day has no stopwatch', await page.$eval('#day-timer', (e) => e.hidden));
+await closeSheet();
+
+/* ---------- a past day on an earlier week ---------- */
+
+await page.click('#week-prev');
+await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'Last week');
+check('an earlier week starts empty',
+  (await colState(2)).cells.every((c) => c.text === ''), JSON.stringify((await colState(2)).cells));
+check('no column is today on an earlier week',
+  (await colState(2)).cells.every((c) => !c.future));
+
+await openCell(2, 2);
+await page.type('#day-form input[name=amount]', '3');
+await page.click('#day-form button[type=submit]');
+await page.waitForFunction(() => !document.querySelector('#day-dialog').open);
+check('an earlier week logs into its own days', (await colState(2)).cells[2].text === '3', JSON.stringify((await colState(2)).cells[2]));
+check('it lands in that week\'s total', (await colState(2)).left === '11 cups left', (await colState(2)).left);
+
+await page.click('#week-next');
+await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
+check('this week is untouched by it', (await colState(2)).left === '6 cups left', (await colState(2)).left);
+check('cannot navigate past this week', await page.$eval('#week-next', (b) => b.disabled));
+
+await page.screenshot({ path: `${SP}/shot-week.png` });
+
+/* ---------- the detail sheet, opened from the name ---------- */
+
+await page.click('.hcol:nth-child(2) .hcol-head');
 await page.waitForSelector('#detail-dialog[open]');
-const moneySummary = await page.$eval('#detail-summary', (e) => e.textContent);
-check('money detail summarises in currency', /^£45\.00 of £40\.00 used/.test(moneySummary), moneySummary);
-const moneyEntries = await page.$$eval('#detail-entries li .amt', (l) => l.map((x) => x.textContent));
-check('money entries listed individually', moneyEntries.join(',') === '£20.00,£12.50,£12.50', JSON.stringify(moneyEntries));
-await page.evaluate(() => document.querySelector('#detail-dialog').close());
+check('the name opens the habit', await page.$eval('#detail-title', (e) => e.textContent) === 'Coffee');
+const entryCount = await page.$$eval('#detail-entries li:not(.none)', (l) => l.length);
+check('it lists this week\'s entries', entryCount === 5, String(entryCount));
 
-// changing the currency relabels without converting
-await page.click('#open-settings');
-await page.waitForSelector('#settings-dialog[open]');
-await page.select('#currency-select', 'USD');
-await page.evaluate(() => document.querySelector('#settings-dialog').close());
-cards = await read();
-check('currency change relabels amounts', cards[2].spent === '$45.00' && cards[2].remaining === '$5.00', JSON.stringify(cards[2]));
+await page.click('#detail-entries .del');
+await page.waitForFunction(() => document.querySelectorAll('#detail-entries li:not(.none)').length === 4);
+await closeSheet('#detail-dialog');
+check('an entry can be deleted from it', (await colState(2)).left === '7 cups left', (await colState(2)).left);
 
-// editing must not offer to change the kind — past entries are in the old unit
-await page.click('.card:nth-child(3) [data-act=detail]');
+/* ---------- editing, hiding ---------- */
+
+await page.click('.hcol:nth-child(2) .hcol-head');
 await page.waitForSelector('#detail-dialog[open]');
 await page.click('[data-action="edit-habit"]');
 await page.waitForSelector('#habit-dialog[open]');
-const kindShown = await page.$eval('#kind-field', (e) => e.getBoundingClientRect().height > 0);
-check('editing hides the kind picker', !kindShown);
+check('editing hides the kind picker', await page.$eval('#kind-field', (e) => e.hidden));
+check('the editor reopens with the stored limit',
+  (await page.$eval('input[name=daily]', (e) => e.value)) === '2');
 await page.$eval('input[name=budget]', (e) => { e.value = ''; });
-await page.type('input[name=budget]', '50');
+await page.type('input[name=budget]', '20');
 await page.click('#habit-form button[type=submit]');
 await page.waitForFunction(() => !document.querySelector('#habit-dialog').open);
-cards = await read();
-check(
-  'editing a money habit keeps its kind and history',
-  cards[2].spent === '$45.00' && cards[2].remaining === '$5.00'
-    && cards[2].label === 'left of $50.00' && !cards[2].over,
-  JSON.stringify(cards[2])
-);
+check('editing keeps the history', (await colState(2)).left === '13 cups left', (await colState(2)).left);
 
-// put the app back to two habits so the rest of the suite is unaffected
-await page.evaluate(async () => {
-  const store = await import('./js/store.js');
-  const takeaway = store.listHabits().find((h) => h.name === 'Takeaway');
-  store.deleteHabit(takeaway.id);
-});
-await page.reload({ waitUntil: 'networkidle0' });
-await page.waitForFunction(() => document.querySelectorAll('.card').length === 2);
+await page.click('.hcol:nth-child(2) .hcol-head');
+await page.waitForSelector('#detail-dialog[open]');
+await page.click('[data-action="hide-habit"]');
+await page.waitForFunction(() => document.querySelectorAll('.hcol').length === 2);
+check('hiding takes the column out of the week', (await colNames()).join(',') === 'Reading,Takeaway', JSON.stringify(await colNames()));
 
-// --- reorder by long-press and drag ---
-const cardNames = () => page.$$eval('.card-name', (n) => n.map((x) => x.textContent));
-// Grip the card by its title: the middle of a card is a button.
-const grip = (i) => page.$eval(`.card:nth-child(${i})`, (e) => {
+await page.click('#open-settings');
+await page.waitForSelector('#settings-dialog[open]');
+await page.click('#hidden-list [data-unhide]');
+await page.waitForFunction(() => document.querySelectorAll('.hcol').length === 3);
+await closeSheet('#settings-dialog');
+// sort_order survives hiding, so it comes back where it was, not on the end.
+check('unhiding restores it in place, with its history',
+  (await colState(2)).name === 'Coffee' && (await colState(2)).left === '13 cups left',
+  JSON.stringify(await colState(2)));
+
+/* ---------- reordering by the name ---------- */
+
+// Grip the name: the cells are targets in their own right, so a hold on one
+// must not start a drag. Columns move sideways, so this drags on X.
+const grip = (i) => page.$eval(`.hcol:nth-child(${i}) .hcol-head`, (e) => {
+  e.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   const r = e.getBoundingClientRect();
-  return { x: r.x + 40, y: r.y + 16, mid: r.y + r.height / 2 };
+  return { x: r.x + r.width / 2, y: r.y + r.height / 2, mid: r.x + r.width / 2 };
 });
 
-const dragCard = async (fromIndex, toIndex) => {
+const dragCol = async (fromIndex, toIndex) => {
   const from = await grip(fromIndex);
   const to = await grip(toIndex);
   await page.mouse.move(from.x, from.y);
@@ -193,280 +343,111 @@ const dragCard = async (fromIndex, toIndex) => {
   await new Promise((r) => setTimeout(r, HOLD + 120)); // hold still to lift it
   // Land past the target's midpoint, not exactly on it: the midpoint is the
   // swap boundary and sitting on it is ambiguous by definition.
-  const dy = to.mid - from.mid + (toIndex < fromIndex ? -12 : 12);
-  for (let i = 1; i <= 8; i++) await page.mouse.move(from.x, from.y + (dy * i) / 8);
+  const dx = to.mid - from.mid + (toIndex < fromIndex ? -12 : 12);
+  for (let i = 1; i <= 8; i++) await page.mouse.move(from.x + (dx * i) / 8, from.y);
   await new Promise((r) => setTimeout(r, 120));
   await page.mouse.up();
-  await new Promise((r) => setTimeout(r, 120));
+  await new Promise((r) => setTimeout(r, 150));
 };
 
-check('starts in creation order', (await cardNames()).join(',') === 'Reading,Coffee', JSON.stringify(await cardNames()));
+check('starts in creation order', (await colNames()).join(',') === 'Reading,Coffee,Takeaway', JSON.stringify(await colNames()));
 
 // a press that moves straight away is a scroll, not a drag
-const beforeSlop = await cardNames();
 {
   const from = await grip(1);
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
-  for (let i = 1; i <= 6; i++) await page.mouse.move(from.x, from.y + i * 20);
+  for (let i = 1; i <= 6; i++) await page.mouse.move(from.x + i * 20, from.y);
   await page.mouse.up();
 }
-check('a quick swipe does not reorder', (await cardNames()).join(',') === beforeSlop.join(','), JSON.stringify(await cardNames()));
+check('a quick swipe does not reorder', (await colNames()).join(',') === 'Reading,Coffee,Takeaway', JSON.stringify(await colNames()));
 
-await dragCard(1, 2);
-check('dragging down reorders', (await cardNames()).join(',') === 'Coffee,Reading', JSON.stringify(await cardNames()));
+await dragCol(1, 2);
+check('dragging right reorders', (await colNames()).join(',') === 'Coffee,Reading,Takeaway', JSON.stringify(await colNames()));
+check('a finished drag does not also open the habit',
+  !(await page.$eval('#detail-dialog', (e) => e.open)));
 
 await page.reload({ waitUntil: 'networkidle0' });
-await page.waitForSelector('.card');
-check('the new order survives a reload', (await cardNames()).join(',') === 'Coffee,Reading', JSON.stringify(await cardNames()));
+await page.waitForSelector('.hcol');
+check('the new order survives a reload', (await colNames()).join(',') === 'Coffee,Reading,Takeaway', JSON.stringify(await colNames()));
 
-await dragCard(2, 1);
-check('dragging up reorders back', (await cardNames()).join(',') === 'Reading,Coffee', JSON.stringify(await cardNames()));
+await dragCol(3, 1);
+check('dragging left reorders', (await colNames()).join(',') === 'Takeaway,Coffee,Reading', JSON.stringify(await colNames()));
 
-// Two cards can't tell "one slot too far" from "correct": with a third card
-// in play, an insertion has somewhere to overshoot to.
-await page.click('#fab');
-await page.waitForSelector('#habit-dialog[open]');
-await page.type('input[name=name]', 'Stretching');
-await page.type('input[name=budget]', '60');
-await page.click('#habit-form button[type=submit]');
-await page.waitForFunction(() => document.querySelectorAll('.card').length === 3);
+// A hold on a cell is a tap on that cell, not a drag of its column.
+{
+  const cell = await page.$eval('.hcol:nth-child(1) .cell[data-day="0"]', (e) => {
+    const r = e.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  await page.mouse.move(cell.x, cell.y);
+  await page.mouse.down();
+  await new Promise((r) => setTimeout(r, HOLD + 150));
+  await page.mouse.move(cell.x + 80, cell.y);
+  await page.mouse.up();
+}
+check('holding a cell never drags its column', (await colNames()).join(',') === 'Takeaway,Coffee,Reading', JSON.stringify(await colNames()));
+await page.evaluate(() => document.querySelector('#day-dialog')?.close());
 
-await dragCard(1, 2);
-check(
-  'dragging into the middle lands in the middle',
-  (await cardNames()).join(',') === 'Coffee,Reading,Stretching',
-  JSON.stringify(await cardNames())
-);
+/* ---------- compact ---------- */
 
-await page.evaluate(async () => {
-  const store = await import('./js/store.js');
-  store.deleteHabit(store.listHabits().find((h) => h.name === 'Stretching').id);
-});
-await page.reload({ waitUntil: 'networkidle0' });
-await page.waitForFunction(() => document.querySelectorAll('.card').length === 2);
-await dragCard(2, 1);
-check('back to the starting order', (await cardNames()).join(',') === 'Reading,Coffee', JSON.stringify(await cardNames()));
-
-// --- hide and unhide ---
-await page.click('.card:nth-child(2) [data-act=detail]');
-await page.waitForSelector('#detail-dialog[open]');
-await page.click('[data-action="hide-habit"]');
-await page.waitForFunction(() => document.querySelectorAll('.card').length === 1);
-check('hiding takes the card out of the week', (await cardNames()).join(',') === 'Reading', JSON.stringify(await cardNames()));
-
+const colWidth = () => page.$eval('.hcol:nth-child(1)', (e) => Math.round(e.getBoundingClientRect().width));
+const comfortable = await colWidth();
 await page.click('#open-settings');
 await page.waitForSelector('#settings-dialog[open]');
-const hiddenShown = await page.$eval('#hidden-field', (e) => e.getBoundingClientRect().height > 0);
-const hiddenNames = await page.$$eval('.hidden-name', (n) => n.map((x) => x.textContent));
-check('hidden habits are listed in settings', hiddenShown && hiddenNames.join(',') === 'Coffee', JSON.stringify(hiddenNames));
-await page.click('#hidden-list [data-unhide]');
-await page.waitForFunction(() => document.querySelectorAll('.card').length === 2);
-const hiddenGone = await page.$eval('#hidden-field', (e) => e.getBoundingClientRect().height > 0);
-cards = await read();
-check(
-  'unhiding restores the habit with its history',
-  !hiddenGone && cards[1].name === 'Coffee' && cards[1].tally === '2',
-  JSON.stringify(cards[1])
-);
-
-// --- compact cards ---
-const cardHeight = () => page.$eval('.card:nth-child(2)', (e) => Math.round(e.getBoundingClientRect().height));
-const roomy = await cardHeight();
 await page.click('#density input[value=compact]');
-const dense = await cardHeight();
-check('compact shrinks the card', dense < roomy * 0.8, `${roomy}px -> ${dense}px`);
-const keepsControls = await page.$$eval('.card:nth-child(2) [data-act]', (b) => b.length);
-check('compact keeps the logging controls', keepsControls === 3, `buttons=${keepsControls}`);
-await page.evaluate(() => document.querySelector('#settings-dialog').close());
+await page.waitForFunction(() => document.querySelector('#grid').classList.contains('compact'));
+await closeSheet('#settings-dialog');
+const compact = await colWidth();
+check('compact narrows the column', compact < comfortable, `${comfortable}px -> ${compact}px`);
+check('compact keeps every day tappable', (await colState(1)).cells.length === 7);
+check('the frozen column shrinks with it',
+  (await page.$eval('.dlabel', (e) => Math.round(e.getBoundingClientRect().height))) < 50);
 await page.screenshot({ path: `${SP}/shot-compact.png` });
 
 await page.reload({ waitUntil: 'networkidle0' });
-await page.waitForSelector('.card');
-check('compact survives a reload', (await cardHeight()) === dense, `${await cardHeight()}px`);
-
-// back to comfortable for the rest of the suite
+await page.waitForSelector('.hcol');
+check('compact survives a reload', (await colWidth()) === compact);
 await page.click('#open-settings');
 await page.waitForSelector('#settings-dialog[open]');
 await page.click('#density input[value=comfortable]');
-await page.evaluate(() => document.querySelector('#settings-dialog').close());
-check('comfortable restores the card', (await cardHeight()) === roomy, `${await cardHeight()}px`);
+await closeSheet('#settings-dialog');
+check('comfortable restores the column', (await colWidth()) === comfortable);
 
-// --- timer ---
-await page.click('.card:nth-child(1) [data-act=toggle-timer]');
-await new Promise((r) => setTimeout(r, 2500));
-cards = await read();
-const elapsed = await page.$eval('.card [data-elapsed]', (e) => e.textContent.trim());
-check('timer runs and ticks', cards[0].running && /^0:0[23]$/.test(elapsed), `elapsed=${elapsed}`);
-await page.screenshot({ path: `${SP}/shot-running.png` });
+/* ---------- deleting, and persistence ---------- */
 
-// --- timer survives a reload (persisted in SQLite) ---
-await page.reload({ waitUntil: 'networkidle0' });
-await page.waitForSelector('.card');
-await new Promise((r) => setTimeout(r, 1200));
-cards = await read();
-const elapsed2 = await page.$eval('.card [data-elapsed]', (e) => e.textContent.trim());
-check('running timer survives reload', cards[0].running && parseInt(elapsed2.split(':')[1]) >= 3, `elapsed=${elapsed2}`);
-check('logged counts survive reload', cards[1].tally === '2', JSON.stringify(cards[1]));
-
-// --- stop the timer, entry is recorded ---
-await page.click('.card:nth-child(1) [data-act=toggle-timer]');
-await page.waitForFunction(() => !document.querySelector('.card').classList.contains('running'));
-cards = await read();
-check('stopping logs elapsed time', cards[0].remaining === '3h' && !cards[0].running, JSON.stringify(cards[0]));
-
-// --- over budget ---
-await page.evaluate(async () => {
-  const store = await import('./js/store.js');
-  store.addManualEntry(1, 200);
-});
-await page.reload({ waitUntil: 'networkidle0' });
-await page.waitForSelector('.card');
-cards = await read();
-check('over budget flips to overage', cards[0].over && /over your 3h budget/.test(cards[0].label), JSON.stringify(cards[0]));
-
-// --- week navigation ---
-await page.click('#week-prev');
-await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'Last week');
-cards = await read();
-check('previous week is empty', cards[0].remaining === '3h' && cards[1].tally === '0', JSON.stringify(cards));
-check('next-week button re-enables', !(await page.$eval('#week-next', (b) => b.disabled)));
-await page.click('#week-next');
-await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
-check('cannot navigate past this week', await page.$eval('#week-next', (b) => b.disabled));
-
-// --- manual logging with a date ---
-await page.click('.card:nth-child(2) [data-act=detail]');
-await page.waitForSelector('#detail-dialog[open]');
-await page.click('[data-action="log-manual"]');
-await page.waitForSelector('#amount-dialog[open]');
-const manualSheet = await page.evaluate(() => ({
-  label: document.querySelector('#amount-label').textContent,
-  dateShown: !document.querySelector('#amount-date-field').hidden,
-  date: document.querySelector('#amount-form input[name=date]').value,
-}));
-const today = new Date();
-const pad = (n) => String(n).padStart(2, '0');
-const todayValue = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-check('manual sheet labels the count amount', manualSheet.label === 'How many (cups)', manualSheet.label);
-check('manual sheet offers a date, defaulting to today',
-  manualSheet.dateShown && manualSheet.date === todayValue, JSON.stringify(manualSheet));
-
-// Backdate into last week: the view should follow the entry there.
-const backdated = new Date(today.getTime() - 7 * 86400000);
-const backValue = `${backdated.getFullYear()}-${pad(backdated.getMonth() + 1)}-${pad(backdated.getDate())}`;
-await page.type('#amount-form input[name=amount]', '5');
-await page.$eval('#amount-form input[name=date]', (el, v) => {
-  el.value = v;
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}, backValue);
-await page.click('#amount-form button[type=submit]');
-await page.waitForFunction(() => !document.querySelector('#amount-dialog').open);
-const afterManual = await page.evaluate(() => ({
-  week: document.querySelector('#week-title').textContent,
-  entries: document.querySelectorAll('#detail-entries li:not(.none)').length,
-  amount: document.querySelector('#detail-entries .amt')?.textContent,
-}));
-check('a backdated manual log lands in its own week',
-  afterManual.week === 'Last week' && afterManual.entries === 1 && afterManual.amount === '5 cups',
-  JSON.stringify(afterManual));
-
-// Put the fixture back: drop the backdated entry and return to this week.
-await page.click('#detail-entries [data-act=del-entry]');
-await page.waitForFunction(() => document.querySelector('#detail-entries .none'));
-await page.evaluate(() => document.querySelector('#detail-dialog').close());
-await page.click('#week-next');
-await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
-
-// --- per-day limits ---
-await page.click('.card:nth-child(2) [data-act=detail]');
-await page.waitForSelector('#detail-dialog[open]');
-await page.click('[data-action="edit-habit"]');
-await page.waitForSelector('#habit-dialog[open]');
-const dailyLabel = await page.$eval('#daily-label', (e) => e.textContent.trim());
-check('daily limit is labelled for the kind', dailyLabel === 'Daily limit (how many) (optional)', dailyLabel);
-await page.type('input[name=daily]', '2');
-await page.click('#habit-form button[type=submit]');
-await page.waitForFunction(() => !document.querySelector('.card:nth-child(2) [data-today]').hidden);
-
-const dayLine = () => page.$eval('.card:nth-child(2) [data-today]', (e) => ({
-  text: e.textContent, over: e.classList.contains('over'), hidden: e.hidden,
-}));
-let day = await dayLine();
-check('card shows today against the daily limit',
-  day.text === 'Today 2 of 2 cups' && !day.over, JSON.stringify(day));
-
-// The weekly budget (10 cups) still has room, so only the day line reacts.
-await page.click('.card:nth-child(2) [data-act=inc]');
-day = await dayLine();
-const warnToast = await page.$eval('#toast', (e) => e.textContent);
-const weekStillFine = await page.$eval('.card:nth-child(2)', (c) => c.classList.contains('over'));
-check('passing the daily limit flags the day, not the week',
-  day.over && day.text === 'Today 3 of 2 cups — over' && !weekStillFine,
-  JSON.stringify({ ...day, weekStillFine }));
-check('crossing the daily limit toasts once', warnToast === "Past today's 2 cups limit", warnToast);
-
-await new Promise((r) => setTimeout(r, 400)); // let the export reach IndexedDB
-await page.reload({ waitUntil: 'networkidle0' });
-await page.waitForSelector('.card');
-day = await dayLine();
-check('the daily limit survives a reload',
-  day.over && day.text === 'Today 3 of 2 cups — over', JSON.stringify(day));
-
-// An earlier week has no "today" to report.
-await page.click('#week-prev');
-await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'Last week');
-check('past weeks hide the daily line', (await dayLine()).hidden);
-await page.click('#week-next');
-await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
-
-// Put the fixture back: drop the extra cup and clear the limit again.
-await page.click('.card:nth-child(2) [data-act=dec]');
-await page.click('.card:nth-child(2) [data-act=detail]');
-await page.waitForSelector('#detail-dialog[open]');
-const detailSummary = await page.$eval('#detail-summary', (e) => e.textContent);
-check('detail summary reports the day too', / · today 2 of 2 cups$/.test(detailSummary), detailSummary);
-await page.click('[data-action="edit-habit"]');
-await page.waitForSelector('#habit-dialog[open]');
-const keptLimit = await page.$eval('input[name=daily]', (e) => e.value);
-check('the editor reopens with the stored limit', keptLimit === '2', keptLimit);
-await page.$eval('input[name=daily]', (e) => { e.value = ''; });
-await page.click('#habit-form button[type=submit]');
-await page.waitForFunction(() => document.querySelector('.card:nth-child(2) [data-today]').hidden);
-check('clearing the limit removes the daily line', true);
-
-// --- detail sheet + delete ---
-await page.click('.card:nth-child(2) [data-act=detail]');
-await page.waitForSelector('#detail-dialog[open]');
-const entryCount = await page.$$eval('#detail-entries li', (l) => l.length);
-check('detail lists this week\'s entries', entryCount === 2, `entries=${entryCount}`);
-await page.screenshot({ path: `${SP}/shot-detail.png` });
 page.on('dialog', (d) => d.accept());
+await page.click('.hcol:nth-child(2) .hcol-head');
+await page.waitForSelector('#detail-dialog[open]');
 await page.click('[data-action="delete-habit"]');
-await page.waitForFunction(() => document.querySelectorAll('.card').length === 1);
-check('deletes a habit', true);
+await page.waitForFunction(() => document.querySelectorAll('.hcol').length === 2);
+check('deletes a habit', (await colNames()).join(',') === 'Takeaway,Reading', JSON.stringify(await colNames()));
 
-// --- persistence across a full restart ---
 await page.evaluate(() => new Promise((r) => setTimeout(r, 400)));
 await page.close();
 const page2 = await browser.newPage();
 await page2.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true });
+page2.on('pageerror', (e) => errors.push('pageerror(2): ' + e.message));
+page2.on('console', (m) => m.type() === 'error' && errors.push('console(2): ' + m.text()));
+page2.on('dialog', (d) => d.accept());
 await page2.goto('http://localhost:4173/', { waitUntil: 'networkidle0' });
-await page2.waitForSelector('.card');
-const names = await page2.$$eval('.card-name', (n) => n.map((x) => x.textContent));
-check('data survives a fresh session', names.length === 1 && names[0] === 'Reading', JSON.stringify(names));
+await page2.waitForSelector('.hcol');
+const survived = await page2.$$eval('.hcol-name', (n) => n.map((x) => x.textContent));
+check('data survives a fresh session', survived.join(',') === 'Takeaway,Reading', JSON.stringify(survived));
 
-// --- service worker / offline ---
+/* ---------- service worker / offline ---------- */
+
 const swReady = await page2.evaluate(() => navigator.serviceWorker.ready.then((r) => Boolean(r.active)));
 check('service worker active', swReady);
 await page2.setOfflineMode(true);
 await page2.reload({ waitUntil: 'domcontentloaded' });
-await page2.waitForSelector('.card', { timeout: 10000 });
-check('loads fully offline', (await page2.$$('.card')).length === 1);
+await page2.waitForSelector('.hcol', { timeout: 10000 });
+check('loads fully offline', (await page2.$$('.hcol')).length === 2);
 await page2.setOfflineMode(false);
 await page2.screenshot({ path: `${SP}/shot-home.png` });
 
-// --- export / import backup round-trip ---
+/* ---------- export / import backup round-trip ---------- */
+
 const { DatabaseSync } = await import('node:sqlite');
 const fs = fsp;
 const downloads = `${SP}/downloads`;
@@ -476,7 +457,6 @@ await page2.createCDPSession().then((cdp) =>
   cdp.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads })
 );
 
-page2.on('dialog', (d) => d.accept());
 await page2.click('#open-settings');
 await page2.waitForSelector('#settings-dialog[open]');
 await page2.click('#export-db');
@@ -492,21 +472,18 @@ const exported = await (async () => {
 check('export writes a .db file', Boolean(exported), String(exported));
 
 // The export must be a genuine SQLite file, readable outside the browser.
-let external = 'unreadable';
 if (exported) {
   const file = new DatabaseSync(exported, { readOnly: true });
-  const habits = file.prepare('SELECT name, kind, weekly_budget FROM habits').all();
+  const habits = file.prepare('SELECT name, kind, weekly_budget FROM habits ORDER BY sort_order').all();
   const entries = file.prepare('SELECT COUNT(*) AS n FROM entries').get();
-  external = JSON.stringify({ habits, entries });
-  check(
-    'exported file opens in a real SQLite client',
-    habits.length === 1 && habits[0].name === 'Reading' && habits[0].kind === 'time' && entries.n > 0,
-    external
-  );
+  check('exported file opens in a real SQLite client',
+    habits.length === 2 && habits[0].name === 'Takeaway' && entries.n > 0,
+    JSON.stringify({ habits, entries }));
   file.close();
 }
 
 // Wipe the app, then restore from the exported file.
+await page2.evaluate(() => document.querySelector('#settings-dialog').close());
 await page2.evaluate(async () => {
   const store = await import('./js/store.js');
   for (const h of store.listHabits()) store.deleteHabit(h.id);
@@ -518,16 +495,17 @@ check('wiped back to empty state', true);
 await page2.click('#open-settings');
 await page2.waitForSelector('#settings-dialog[open]');
 await (await page2.$('#import-file')).uploadFile(exported);
-await page2.waitForSelector('.card', { timeout: 10000 });
-const restored = await page2.$$eval('.card', (cards) => cards.map((c) => ({
-  name: c.querySelector('.card-name').textContent,
-  label: c.querySelector('[data-remaining-label]').textContent,
+await page2.waitForSelector('.hcol', { timeout: 10000 });
+const restored = await page2.$$eval('.hcol', (rows) => rows.map((r) => ({
+  name: r.querySelector('.hcol-name').textContent,
+  left: r.querySelector('[data-left]').textContent,
+  days: [...r.querySelectorAll('[data-cell]')].map((c) => c.textContent).join('|'),
 })));
-check(
-  'import restores habits and history',
-  restored.length === 1 && restored[0].name === 'Reading' && /over your 3h budget/.test(restored[0].label),
-  JSON.stringify(restored)
-);
+check('import restores habits, history and the days they fell on',
+  restored.length === 2
+  && restored[0].name === 'Takeaway' && restored[0].days.split('|').filter(Boolean).length === 3
+  && restored.every((r) => /\d/.test(r.days)),
+  JSON.stringify(restored));
 
 // A file that isn't one of ours must be rejected without destroying anything.
 const junk = `${downloads}/junk.db`;
@@ -537,15 +515,13 @@ await page2.waitForSelector('#settings-dialog[open]');
 await (await page2.$('#import-file')).uploadFile(junk);
 await new Promise((r) => setTimeout(r, 600));
 const toastText = await page2.$eval('#toast', (t) => t.textContent);
-const survived = await page2.$$eval('.card-name', (n) => n.map((x) => x.textContent));
-check(
-  'rejects a junk file and keeps existing data',
-  /not a Habit Budget database/.test(toastText) && survived.length === 1,
-  `toast="${toastText}" cards=${JSON.stringify(survived)}`
-);
+check('rejects a junk file and keeps existing data',
+  /not a Habit Budget database/.test(toastText) && (await page2.$$('.hcol')).length === 2,
+  `toast="${toastText}"`);
 await page2.evaluate(() => document.querySelector('#settings-dialog').close());
 
-// --- a database written before money existed must upgrade in place ---
+/* ---------- a database written before money existed ---------- */
+
 // The v1 schema is frozen here on purpose: it is what real installs contain,
 // and its CHECK constraint accepts only 'time' and 'count'.
 const legacy = `${downloads}/legacy-v1.db`;
@@ -581,18 +557,11 @@ await page2.click('#open-settings');
 await page2.waitForSelector('#settings-dialog[open]');
 await (await page2.$('#import-file')).uploadFile(legacy);
 await page2.waitForFunction(
-  () => [...document.querySelectorAll('.card-name')].some((n) => n.textContent === 'Walking'),
+  () => [...document.querySelectorAll('.hcol-name')].some((n) => n.textContent === 'Walking'),
   { timeout: 10000 }
 );
-const upgraded = await page2.$$eval('.card', (cards) => cards.map((c) => ({
-  name: c.querySelector('.card-name').textContent,
-  remaining: c.querySelector('[data-remaining]').textContent,
-})));
-check(
-  'a v1 database opens with its history intact',
-  upgraded.length === 1 && upgraded[0].name === 'Walking' && upgraded[0].remaining === '1h 40m',
-  JSON.stringify(upgraded)
-);
+const upgraded = await page2.$eval('.hcol:nth-child(1) [data-left]', (e) => e.textContent);
+check('a v1 database opens with its history intact', upgraded === '1h 40m left', upgraded);
 
 // The point of the migration: the widened CHECK now accepts money.
 await page2.click('#open-settings');
@@ -605,13 +574,10 @@ await page2.type('input[name=name]', 'Groceries');
 await page2.click('input[name=kind][value=money]');
 await page2.type('input[name=budget]', '60');
 await page2.click('#habit-form button[type=submit]');
-await page2.waitForFunction(() => document.querySelectorAll('.card').length === 2);
-const added = await page2.$eval('.card:nth-child(2) [data-remaining]', (e) => e.textContent);
-check('money habits can be added to an upgraded database', added === '€60.00', added);
+await page2.waitForFunction(() => document.querySelectorAll('.hcol').length === 2);
+const added = await page2.$eval('.hcol:nth-child(2) [data-left]', (e) => e.textContent);
+check('money habits can be added to an upgraded database', added === '€60.00 left', added);
 
-console.log('\nPASS:');
-ok.forEach((s) => console.log('  ✓ ' + s));
-if (bad.length) { console.log('\nFAIL:'); bad.forEach((s) => console.log('  ✗ ' + s)); }
-if (errors.length) { console.log('\nPAGE ERRORS:'); errors.forEach((e) => console.log('  ! ' + e)); }
+report();
 await browser.close();
 process.exit(bad.length || errors.length ? 1 : 0);

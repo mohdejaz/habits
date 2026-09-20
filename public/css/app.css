@@ -79,109 +79,214 @@ body {
 .icon-btn:active { background: var(--surface-2); }
 .icon-btn[disabled] { opacity: .3; }
 
-/* ---------- habit cards ---------- */
+/* ---------- the grid ---------- */
 
-.habits { display: flex; flex-direction: column; gap: 10px; padding: 0 12px; }
+/* Days down the side, habits across. The day column is frozen and the habits
+   scroll under it. Every row lines up because the heights are fixed here
+   rather than left to the content: the day column and the habit columns are
+   separate elements and have no other way to agree. */
+.grid {
+  --daycol: 80px;
+  --habitcol: 108px;
+  --headh: 64px;
+  --cellh: 50px;
+  --cellgap: 5px;
 
-.card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 11px 14px 12px;
-  position: relative;
-  overflow: hidden;
+  display: flex;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 4px;
+  scrollbar-width: none;
 }
-/* the whole card is a drag handle, so a long press must not select its text
-   or raise iOS's callout */
-.card {
+.grid::-webkit-scrollbar { display: none; }
+
+.daycol {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex: 0 0 auto;
+  width: var(--daycol);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cellgap);
+  /* the right padding is the gutter the cells slide under */
+  padding: 0 8px 0 12px;
+  /* opaque, or the cells scrolling underneath show through */
+  background: var(--bg);
+}
+.corner { height: var(--headh); }
+
+.dlabel {
+  height: var(--cellh);
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.dlabel .dow { font-size: 15px; font-weight: 650; }
+.dlabel .dom { font-size: 13px; color: var(--muted); }
+.dlabel.today .dow,
+.dlabel.today .dom { color: var(--accent); }
+.dlabel.future { opacity: .45; }
+
+.habits { display: flex; gap: var(--cellgap); padding-right: 12px; }
+
+.hcol {
+  flex: 0 0 auto;
+  width: var(--habitcol);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cellgap);
+  /* the name is a drag handle, so a long press must not select its text
+     or raise iOS's callout */
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
-.card::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--habit-color, var(--accent));
-}
-.card.running { border-color: var(--habit-color, var(--accent)); }
-.card.over::before { background: var(--danger); }
 
 /* ---------- reordering ---------- */
 
-.habits.reordering .card { transition: transform .18s cubic-bezier(.2, .8, .3, 1); }
-.habits.reordering .card.dragging {
+.habits.reordering .hcol { transition: transform .18s cubic-bezier(.2, .8, .3, 1); }
+.habits.reordering .hcol.dragging {
   position: relative;
-  z-index: 2;
+  z-index: 3;
   transition: none;
-  box-shadow: 0 14px 30px rgba(0, 0, 0, .45);
-  border-color: var(--habit-color, var(--accent));
-  scale: 1.02;
+  scale: 1.04;
+  filter: drop-shadow(0 10px 22px rgba(0, 0, 0, .5));
 }
 
-.card-head { display: flex; align-items: baseline; gap: 8px; }
-.card-name {
-  flex: 1;
-  margin: 0;
-  font-size: 16px;
-  font-weight: 620;
+/* ---------- the habit's own header ---------- */
+
+.hcol-head {
+  height: var(--headh);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;          /* or the name's ellipsis never kicks in */
+  padding: 0 8px;
+  border: 0;
+  border-top: 3px solid var(--habit-color, var(--accent));
+  border-radius: 3px 3px 0 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hcol.over .hcol-head { border-top-color: var(--danger); }
+
+.hcol-name,
+.hcol-left {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.card-more {
-  margin: -6px -8px -6px 0;
-  padding: 6px 10px;
-  border: 0;
-  background: none;
+.hcol-name { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.hcol-left {
+  margin-top: 2px;
+  font-size: 12px;
   color: var(--muted);
-  font-size: 17px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.remaining { display: flex; align-items: baseline; gap: 6px; margin-top: 3px; }
-.remaining .big {
-  font-size: 25px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
-.remaining .label { font-size: 12px; color: var(--muted); }
-.card.over .remaining .big { color: var(--danger); }
+.hcol.over .hcol-left { color: var(--danger); font-weight: 600; }
 
-.bar {
-  height: 5px;
-  margin: 8px 0 10px;
+.hcol-bar {
+  display: block;
+  height: 3px;
+  margin-top: 6px;
   border-radius: 99px;
   background: var(--surface-2);
   overflow: hidden;
 }
-.bar > i {
+.hcol-bar > i {
   display: block;
   height: 100%;
   border-radius: 99px;
   background: var(--habit-color, var(--accent));
   transition: width .25s ease;
 }
-.card.over .bar > i { background: var(--danger); }
+.hcol.over .hcol-bar > i { background: var(--danger); }
 
-/* the per-day limit, shown under the weekly bar only when one is set */
-.today {
-  margin: -4px 0 9px;
-  font-size: 12px;
-  color: var(--muted);
+/* ---------- day cells ---------- */
+
+.cell {
+  position: relative;
+  height: var(--cellh);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  cursor: pointer;
 }
-.today.over { color: var(--warn); font-weight: 600; }
+.cell:active { transform: scale(.95); }
+/* A day with something in it is tinted with the habit's own colour, so a week
+   reads as a pattern before any of the numbers do. */
+.cell.logged {
+  background: color-mix(in srgb, var(--habit-color, var(--accent)) 24%, var(--surface-2));
+}
+.cell.today { border-color: var(--line); }
+.cell.today.logged,
+.cell.ticking { border-color: var(--habit-color, var(--accent)); }
 
-/* ---------- controls ---------- */
+/* Past the daily limit is a softer state than over the week: the cell goes
+   amber, and the habit's column is left alone. */
+.cell.over {
+  background: color-mix(in srgb, var(--warn) 30%, var(--surface-2));
+  color: var(--warn);
+}
+/* Logging into a day that has not happened yet is a mis-tap, not an intention. */
+.cell.future {
+  background: transparent;
+  border: 1px dashed var(--line);
+  opacity: .5;
+  cursor: default;
+}
+.cell:empty::after { content: '·'; color: var(--line); font-size: 18px; }
 
-.controls { display: flex; align-items: center; gap: 8px; }
+.cell.ticking::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--habit-color, var(--accent));
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: .25; } }
+
+/* ---------- compact ---------- */
+/* Same grid, tightened: nothing is dropped, so more habits fit on screen
+   before anything has to be scrolled to. */
+
+.grid.compact {
+  --daycol: 66px;
+  --habitcol: 88px;
+  --headh: 56px;
+  --cellh: 40px;
+  --cellgap: 4px;
+}
+.grid.compact .dlabel .dow { font-size: 13px; }
+.grid.compact .dlabel .dom { font-size: 12px; }
+.grid.compact .hcol-name { font-size: 13px; }
+.grid.compact .hcol-left { font-size: 11px; }
+.grid.compact .cell { font-size: 14px; border-radius: 10px; }
+
+/* ---------- buttons ---------- */
 
 .btn {
-  min-height: 44px;   /* the touch-target floor; compact opts out, this does not */
+  min-height: 44px;
   padding: 0 16px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -198,104 +303,42 @@ body {
 .btn.danger-ghost { background: transparent; color: var(--danger); border-color: transparent; }
 .btn.block { flex: 1; }
 
+/* ---------- the stepper and the stopwatch, now inside the day sheet ---------- */
+
 .timer-btn {
-  flex: 1;
-  background: var(--habit-color, var(--accent));
-  border-color: var(--habit-color, var(--accent));
+  width: 100%;
+  margin: -6px 0 16px;
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
-}
-.card.running .timer-btn { background: var(--danger); border-color: var(--danger); }
-
-.elapsed {
-  font-size: 23px;
-  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-  min-width: 84px;
 }
-.elapsed.idle { color: var(--muted); font-weight: 600; }
-.elapsed .dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 8px;
-  border-radius: 50%;
-  background: var(--danger);
-  vertical-align: middle;
-  animation: pulse 1.6s ease-in-out infinite;
-}
-@keyframes pulse { 50% { opacity: .25; } }
+.timer-btn.running { background: var(--danger); border-color: var(--danger); }
 
-/* money card: total spent alongside a button that opens the amount sheet */
-.spend-btn {
-  flex: 1 1 auto;
-  white-space: nowrap;
-  background: var(--habit-color, var(--accent));
-  border-color: var(--habit-color, var(--accent));
-  color: #fff;
-}
-.spent {
-  flex: 0 1 auto;
-  min-width: 0;
-  font-size: 21px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-  line-height: 1.15;
-  overflow: hidden;
-}
-.spent > span { display: block; overflow: hidden; text-overflow: ellipsis; }
-.spent small { display: block; font-size: 10px; font-weight: 500; color: var(--muted); }
-
-.stepper { display: flex; align-items: center; gap: 10px; width: 100%; }
+.stepper { display: flex; align-items: center; gap: 10px; margin: -4px 0 16px; }
 .step-btn {
   flex: 1;
-  height: 46px;
+  height: 50px;
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--surface-2);
   color: var(--text);
-  font-size: 23px;
+  font-size: 25px;
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
 }
-.step-btn.plus { background: var(--habit-color, var(--accent)); border-color: var(--habit-color, var(--accent)); color: #fff; }
+.step-btn.plus { background: var(--accent); border-color: var(--accent); color: #fff; }
 .step-btn:disabled { opacity: .35; }
 .step-btn:active { transform: scale(.96); }
 .tally {
-  min-width: 58px;
+  min-width: 62px;
   text-align: center;
-  font-size: 23px;
+  font-size: 24px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 .tally small { display: block; font-size: 10px; font-weight: 500; color: var(--muted); }
-
-/* ---------- compact cards ---------- */
-/* Same card, tightened: nothing is dropped, so a habit can still be logged
-   without opening anything. Tap targets shrink below the 44px guideline here,
-   which is the trade the setting exists to make. */
-
-.habits.compact { gap: 8px; }
-.habits.compact .card { padding: 7px 11px 8px; }
-.habits.compact .card-name { font-size: 14px; }
-.habits.compact .card-more { font-size: 15px; padding: 4px 8px; margin: -4px -8px -4px 0; }
-.habits.compact .remaining { margin-top: 0; gap: 5px; }
-.habits.compact .remaining .big { font-size: 19px; }
-.habits.compact .remaining .label { font-size: 11px; }
-.habits.compact .bar { height: 4px; margin: 5px 0 7px; }
-.habits.compact .today { margin: -3px 0 6px; font-size: 11px; }
-.habits.compact .controls,
-.habits.compact .stepper { gap: 6px; }
-.habits.compact .btn { min-height: 34px; padding: 0 12px; border-radius: 10px; font-size: 15px; }
-.habits.compact .step-btn { height: 36px; font-size: 20px; border-radius: 10px; }
-.habits.compact .elapsed { font-size: 17px; min-width: 62px; }
-.habits.compact .tally,
-.habits.compact .spent { font-size: 17px; }
-.habits.compact .tally { min-width: 44px; }
-.habits.compact .tally small,
-.habits.compact .spent small { font-size: 9px; }
 
 /* ---------- fab ---------- */
 
@@ -426,6 +469,7 @@ body {
 .sheet-actions .btn { flex: 1; }
 
 .detail-summary { margin: -8px 0 16px; color: var(--muted); font-size: 14px; }
+.detail-summary.over { color: var(--warn); font-weight: 600; }
 .detail-tools {
   display: grid;
   grid-template-columns: 1fr 1fr;

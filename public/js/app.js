@@ -7,20 +7,27 @@ const COLORS = ['#5b8def', '#3ec98a', '#f2a33c', '#f2555a', '#a878f0', '#3ec2c9'
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const list = $('#habit-list');
+// The habits scroll sideways under a frozen day column, so "the thing that
+// scrolls" during a drag is this element and not the window.
+const grid = $('#grid');
+const daycol = $('#daycol');
 const emptyState = $('#empty');
 const habitDialog = $('#habit-dialog');
 const habitForm = $('#habit-form');
 const detailDialog = $('#detail-dialog');
 const settingsDialog = $('#settings-dialog');
-const amountDialog = $('#amount-dialog');
-const amountForm = $('#amount-form');
+const dayDialog = $('#day-dialog');
+const dayForm = $('#day-form');
 
 let weekOffset = 0;      // 0 = current week, -1 = last week, …
 let editingId = null;    // habit being edited in the sheet
 let detailId = null;     // habit shown in the detail sheet
 let timers = new Map();  // habit_id -> started_at, for live ticking
-let amountId = null;     // habit being logged in the amount sheet
-let amountManual = false; // amount sheet opened from "Log manually" (date is pickable)
+let days = [];           // the seven columns of the week on screen
+let todayIndex = -1;     // which column is today, or -1 on an earlier week
+let daySheet = null;     // { habitId, dayIndex } while the day sheet is open
+let suppressClick = false; // set by a finished drag, so it cannot also open a sheet
+let scrollLeft = 0;      // how far the habits are scrolled, kept across renders
 
 /* ---------- formatting ---------- */
 
@@ -105,27 +112,6 @@ function formatClock(ms) {
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-// <input type=date> speaks local calendar days; Date does not, so convert
-// through the parts rather than through toISOString (which is UTC).
-function toDateInput(ms) {
-  const d = new Date(ms);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-// Today keeps the real clock time; any other day lands at midday, far enough
-// from both edges that a DST shift cannot slide it into a neighbouring day.
-function fromDateInput(value) {
-  const [y, m, d] = String(value).split('-').map(Number);
-  if (!y || !m || !d) return null;
-  if (value === toDateInput(Date.now())) return Date.now();
-  return new Date(y, m - 1, d, 12).getTime();
-}
-
-function formatDay(ms) {
-  return new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-}
-
 function toast(message) {
   const el = $('#toast');
   el.textContent = message;
@@ -136,18 +122,22 @@ function toast(message) {
 
 /* ---------- rendering ---------- */
 
+// Sunday-first, indexed by getDay(); the week itself may start on any of them.
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 function render() {
-  // Cards are about to be replaced, so a drag in flight is holding nodes that
-  // are on their way out. Drop it rather than let it move detached elements.
+  // Columns are about to be replaced, so a drag in flight is holding nodes
+  // that are on their way out. Drop it rather than move detached elements.
   if (drag) cleanupDrag();
 
   const range = store.weekRange(weekOffset);
   const habits = store.listHabits();
-  const usage = store.usageForWeek(range);
-  // "Today" only exists in the current week; an earlier week shows the
-  // weekly picture alone.
-  const today = weekOffset === 0 ? store.usageForDay() : null;
+  const usage = store.usageByDay(range);
+  days = store.weekDays(range);
   timers = weekOffset === 0 ? store.runningTimers() : new Map();
+  // Which row is today — and so also the edge past which the days have not
+  // happened yet. An earlier week has neither.
+  todayIndex = weekOffset === 0 ? store.dayIndexOf(Date.now(), days) : -1;
 
   $('#week-title').textContent =
     weekOffset === 0 ? 'This week' : weekOffset === -1 ? 'Last week' : store.formatWeekRange(range);
@@ -156,177 +146,138 @@ function render() {
 
   emptyState.hidden = habits.length > 0;
   $('#fab').hidden = habits.length === 0;
-  list.classList.toggle('compact', store.getSetting('compact', '0') === '1');
+  grid.hidden = habits.length === 0;
+  grid.classList.toggle('compact', store.getSetting('compact', '0') === '1');
 
-  list.replaceChildren(
-    ...habits.map((h) => card(h, usage.get(h.id) || 0, today && (today.get(h.id) || 0)))
-  );
+  renderDayColumn();
+  list.replaceChildren(...habits.map((h) => column(h, usage.get(h.id) || new Array(7).fill(0))));
+  // A re-render resets the scroll, which would hide whichever habit the user
+  // had scrolled to. Keeping it is cheap and much less jarring.
+  grid.scrollLeft = scrollLeft;
   tick();
 }
 
-// `usedToday` is null when an earlier week is on screen, which hides the
-// daily line rather than showing a total that belongs to a different week.
-function card(habit, used, usedToday) {
-  const el = document.createElement('article');
-  el.className = 'card';
+// The frozen column: a blank corner to clear the habit headers, then a label
+// per day.
+function renderDayColumn() {
+  const corner = document.createElement('div');
+  corner.className = 'corner';
+  daycol.replaceChildren(corner, ...days.map((day) => {
+    const el = document.createElement('div');
+    el.className = 'dlabel';
+    if (day.index === todayIndex) el.classList.add('today');
+    if (todayIndex >= 0 && day.index > todayIndex) el.classList.add('future');
+    el.innerHTML =
+      `<span class="dow">${DAY_NAMES[day.start.getDay()]}</span>` +
+      `<span class="dom">${day.start.getDate()}</span>`;
+    return el;
+  }));
+}
+
+// `daily` is the seven totals for this habit, in day order. The column keeps
+// them on the element so a tick can recompute without touching the database.
+function column(habit, daily) {
+  const el = document.createElement('div');
+  el.className = 'hcol';
   el.dataset.id = habit.id;
   el.style.setProperty('--habit-color', habit.color);
 
-  const running = timers.has(habit.id);
-  if (running) el.classList.add('running');
-
-  // Money has no natural increment the way a coffee does, so instead of a
-  // stepper it opens a sheet and shows the running total for the week.
-  const controls =
-    habit.kind === 'time'
-      ? `<div class="controls">
-           <div class="elapsed" data-elapsed></div>
-           <button class="btn timer-btn" data-act="toggle-timer">${running ? 'Stop' : 'Start'}</button>
-         </div>`
-      : habit.kind === 'money'
-      ? `<div class="controls">
-           <div class="spent"><span data-spent></span><small>spent</small></div>
-           <button class="btn spend-btn" data-act="spend">Log spend</button>
-         </div>`
-      : `<div class="stepper">
-           <button class="step-btn" data-act="dec" aria-label="Remove one"${used <= 0 ? ' disabled' : ''}>−</button>
-           <div class="tally">${Math.round(used * 10) / 10}<small>logged</small></div>
-           <button class="step-btn plus" data-act="inc" aria-label="Add one">+</button>
-         </div>`;
+  const cells = days
+    .map((day) => {
+      // Logging into a day that has not happened yet is a mis-tap, not an
+      // intention, so those cells are inert.
+      const future = todayIndex >= 0 && day.index > todayIndex;
+      const classes = ['cell', future ? 'future' : '', day.index === todayIndex ? 'today' : ''];
+      return `<button type="button" class="${classes.filter(Boolean).join(' ')}"
+        data-cell data-day="${day.index}"${future ? ' disabled' : ''}></button>`;
+    })
+    .join('');
 
   el.innerHTML = `
-    <div class="card-head">
-      <h2 class="card-name">${escapeHtml(habit.name)}</h2>
-      <button class="card-more" data-act="detail" aria-label="Options for ${escapeHtml(habit.name)}">⋯</button>
-    </div>
-    <div class="remaining">
-      <span class="big" data-remaining></span>
-      <span class="label" data-remaining-label></span>
-    </div>
-    <div class="bar"><i data-bar></i></div>
-    <div class="today" data-today hidden></div>
-    ${controls}`;
+    <button type="button" class="hcol-head" data-head>
+      <span class="hcol-name">${escapeHtml(habit.name)}</span>
+      <span class="hcol-left" data-left></span>
+      <span class="hcol-bar"><i data-bar></i></span>
+    </button>
+    ${cells}`;
 
   el._habit = habit;
-  el._used = used;
-  el._usedToday = usedToday;
+  el._days = daily;
   return el;
 }
 
-// Refreshes only the numbers that move, so a running timer can update every
-// second without rebuilding cards (and losing button state) each time.
+// Refreshes only the numbers that move, so a running stopwatch can update
+// every second without rebuilding the grid.
 function tick() {
   const now = Date.now();
   for (const el of list.children) {
     const habit = el._habit;
     const startedAt = timers.get(habit.id);
-    const live = startedAt ? (now - startedAt) / 60000 : 0;
-    const used = el._used + (habit.kind === 'time' ? live : 0);
+    const live = startedAt && habit.kind === 'time' ? (now - startedAt) / 60000 : 0;
+    el.classList.toggle('running', Boolean(startedAt));
+
+    const used = el._days.reduce((a, b) => a + b, 0) + live;
     const remaining = habit.weekly_budget - used;
-    // Summing floats leaves dust, and a card must not go red over a
+    // Summing floats leaves dust, and a column must not go red over a
     // hundredth of a penny.
     const over = habit.kind === 'money' ? remaining < -0.005 : remaining < 0;
-
     el.classList.toggle('over', over);
-    $('[data-remaining]', el).textContent = over
-      ? formatAmount(habit, -remaining)
-      : formatAmount(habit, remaining);
-    $('[data-remaining-label]', el).textContent = over
-      ? `over your ${formatBudget(habit)} budget`
-      : `left of ${formatBudget(habit)}`;
 
+    $('[data-left]', el).textContent = over
+      ? `${formatAmount(habit, -remaining)} over`
+      : `${formatAmount(habit, remaining)} left`;
     const pct = habit.weekly_budget > 0 ? Math.min(100, (used / habit.weekly_budget) * 100) : 0;
     $('[data-bar]', el).style.width = `${pct}%`;
 
-    const spentEl = $('[data-spent]', el);
-    if (spentEl) spentEl.textContent = formatAmount(habit, used);
+    for (const cell of el.querySelectorAll('[data-cell]')) {
+      const i = Number(cell.dataset.day);
+      // A running stopwatch belongs to today's row and nowhere else.
+      const value = el._days[i] + (i === todayIndex ? live : 0);
+      const limit = habit.daily_limit;
+      const dayOver = Boolean(limit) &&
+        (habit.kind === 'money' ? value - limit > 0.005 : value > limit);
 
-    const todayEl = $('[data-today]', el);
-    const limit = habit.daily_limit;
-    // A running timer counts towards today as well as the week.
-    const todayUsed = el._usedToday === null ? null : el._usedToday + (habit.kind === 'time' ? live : 0);
-    todayEl.hidden = !limit || todayUsed === null;
-    if (!todayEl.hidden) {
-      const dayOver = habit.kind === 'money' ? todayUsed - limit > 0.005 : todayUsed > limit;
-      todayEl.classList.toggle('over', dayOver);
-      todayEl.textContent =
-        `Today ${formatBare(habit, todayUsed)} of ${formatAmount(habit, limit)}${dayOver ? ' — over' : ''}`;
-    }
-
-    const elapsedEl = $('[data-elapsed]', el);
-    if (elapsedEl) {
-      elapsedEl.classList.toggle('idle', !startedAt);
-      elapsedEl.innerHTML = startedAt
-        ? `<span class="dot"></span>${formatClock(now - startedAt)}`
-        : '0:00';
+      cell.classList.toggle('logged', value > 0);
+      cell.classList.toggle('over', dayOver);
+      cell.classList.toggle('ticking', Boolean(startedAt) && i === todayIndex);
+      // The column is headed with the habit's name, so a count needs only its
+      // number; time and money carry their own unit and keep it.
+      cell.textContent = value > 0 ? formatBare(habit, value) : '';
+      cell.setAttribute('aria-label', cellLabel(habit, i, value));
     }
   }
 }
 
-// Re-reads one card's usage from the database and updates it in place. Used
-// by the +/- buttons: a full re-render would replace the button mid-tap.
-function refreshCard(el) {
-  const habit = el._habit;
-  el._used = store.usedInWeek(habit.id, store.weekRange(weekOffset));
-  if (el._usedToday !== null) el._usedToday = store.usedInDay(habit.id);
-  if (habit.kind === 'count') {
-    $('.tally', el).firstChild.textContent = String(Math.round(el._used * 10) / 10);
-    $('[data-act=dec]', el).disabled = el._used <= 0;
-  }
-  tick();
+function cellLabel(habit, index, value) {
+  const when = days[index].start.toLocaleDateString(undefined, {
+    weekday: 'long', day: 'numeric', month: 'long',
+  });
+  return `${habit.name}, ${when}, ${value > 0 ? formatAmount(habit, value) : 'nothing'} logged`;
 }
 
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-/* ---------- habit list interactions ---------- */
+/* ---------- grid interactions ---------- */
+
+grid.addEventListener('scroll', () => {
+  if (!drag) scrollLeft = grid.scrollLeft;
+}, { passive: true });
 
 list.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-act]');
-  if (!button) return;
-  const el = button.closest('.card');
-  const habit = el._habit;
-  const range = store.weekRange(weekOffset);
-
-  switch (button.dataset.act) {
-    case 'toggle-timer': {
-      if (weekOffset !== 0) return toast('Timers only run in the current week');
-      if (timers.has(habit.id)) {
-        const before = dayTotal(habit);
-        const minutes = store.stopTimer(habit.id);
-        const note = crossedDailyLimit(habit, before) ? dailyLimitNote(habit) : '';
-        toast(minutes ? `Logged ${formatMinutes(minutes)} of ${habit.name}${note}` : 'Too short to log');
-      } else {
-        store.startTimer(habit.id);
-      }
-      render();
-      break;
-    }
-    case 'inc': {
-      if (weekOffset !== 0) return toast('Switch to this week to log');
-      const before = dayTotal(habit);
-      store.increment(habit.id);
-      buzz(10);
-      refreshCard(el);
-      // The stepper is otherwise silent; the daily limit is worth a word.
-      if (crossedDailyLimit(habit, before)) {
-        toast(`Past today's ${formatAmount(habit, habit.daily_limit)} limit`);
-      }
-      break;
-    }
-    case 'dec':
-      if (!store.decrement(habit.id, range)) return toast('Nothing logged this week');
-      buzz(10);
-      refreshCard(el);
-      break;
-    case 'spend':
-      openAmountSheet(habit);
-      break;
-    case 'detail':
-      openDetail(habit.id);
-      break;
+  // A finished drag ends in a click on a row that has just been replaced. It
+  // must not also open a sheet.
+  if (suppressClick) {
+    suppressClick = false;
+    return;
   }
+  const el = event.target.closest('.hcol');
+  if (!el) return;
+
+  const cell = event.target.closest('[data-cell]');
+  if (cell) return openDaySheet(el._habit, Number(cell.dataset.day));
+  if (event.target.closest('[data-head]')) openDetail(el._habit.id);
 });
 
 function buzz(ms) {
@@ -335,48 +286,51 @@ function buzz(ms) {
 
 /* ---------- daily limits ---------- */
 
-// Today's total before a log, so the crossing can be spotted afterwards.
+// The day's total before a log, so the crossing can be spotted afterwards.
 // Zero for habits without a limit: nothing reads it in that case.
-function dayTotal(habit) {
-  return habit.daily_limit ? store.usedInDay(habit.id) : 0;
+function dayTotal(habit, day) {
+  return habit.daily_limit ? store.usedInDay(habit.id, day) : 0;
 }
 
-// True when *this* log is what took today past the limit. Only the crossing
+// True when *this* log is what took the day past its limit. Only the crossing
 // is worth a word — warning on every later tap would just be nagging.
-function crossedDailyLimit(habit, usedBefore) {
+function crossedDailyLimit(habit, day, usedBefore) {
   if (!habit.daily_limit) return false;
   const slack = habit.kind === 'money' ? 0.005 : 0;
   return usedBefore - habit.daily_limit <= slack
-    && store.usedInDay(habit.id) - habit.daily_limit > slack;
-}
-
-function dailyLimitNote(habit) {
-  return ` — past today's ${formatAmount(habit, habit.daily_limit)} limit`;
+    && store.usedInDay(habit.id, day) - habit.daily_limit > slack;
 }
 
 /* ---------- drag to reorder ---------- */
 
-const HOLD_MS = 300;  // press-and-hold before a card lifts
+const HOLD_MS = 300;  // press-and-hold before a column lifts
 const SLOP = 8;       // travel before the hold counts as a scroll instead
-const EDGE = 72;      // auto-scroll zone at the top and bottom of the viewport
+const EDGE = 56;      // auto-scroll zone at the left and right of the grid
 
 let drag = null;
 
-// The whole card is the handle except its buttons, which keep working as
-// buttons. Everything below measures in page coordinates so that auto-scroll
-// and the drag maths agree while the document moves underneath.
+// Only the name is a handle. Every cell is a target in its own right, so a
+// hold on one must not drag the column out from under the finger.
+//
+// Everything below works in the grid's own scrolled coordinates, on the X
+// axis: the habits scroll sideways, and a drag and the scroll underneath it
+// have to agree about where a column is.
+const gridX = (event) => event.clientX + grid.scrollLeft;
+
 list.addEventListener('pointerdown', (event) => {
   if (event.pointerType === 'mouse' && event.button !== 0) return;
-  const el = event.target.closest('.card');
-  if (!el || event.target.closest('[data-act]')) return;
+  const head = event.target.closest('.hcol-head');
+  const el = head && head.closest('.hcol');
+  if (!el) return;
   if (list.children.length < 2) return;
 
   cancelDrag();
   drag = {
     el,
     pointerId: event.pointerId,
-    startY: event.pageY,
-    pageY: event.pageY,
+    startX: gridX(event),
+    startY: event.clientY,
+    x: gridX(event),
     active: false,
     raf: 0,
     scrollBy: 0,
@@ -385,19 +339,19 @@ list.addEventListener('pointerdown', (event) => {
 });
 
 function beginDrag() {
-  const cards = [...list.children];
-  const scroll = window.scrollY;
-  drag.cards = cards;
-  drag.rects = cards.map((c) => {
+  const cols = [...list.children];
+  const scroll = grid.scrollLeft;
+  drag.cols = cols;
+  drag.rects = cols.map((c) => {
     const box = c.getBoundingClientRect();
-    return { top: box.top + scroll, height: box.height, centre: box.top + scroll + box.height / 2 };
+    return { left: box.left + scroll, width: box.width, centre: box.left + scroll + box.width / 2 };
   });
-  drag.from = cards.indexOf(drag.el);
+  drag.from = cols.indexOf(drag.el);
   drag.to = drag.from;
 
-  const gap = parseFloat(getComputedStyle(list).rowGap);
-  drag.gap = Number.isFinite(gap) ? gap : 12;
-  drag.shift = drag.rects[drag.from].height + drag.gap;
+  const gap = parseFloat(getComputedStyle(list).columnGap);
+  drag.gap = Number.isFinite(gap) ? gap : 5;
+  drag.shift = drag.rects[drag.from].width + drag.gap;
   drag.active = true;
 
   list.classList.add('reordering');
@@ -409,63 +363,67 @@ function beginDrag() {
 list.addEventListener('pointermove', (event) => {
   if (!drag || event.pointerId !== drag.pointerId) return;
   if (!drag.active) {
-    // A finger that travels before the hold expires was trying to scroll.
-    if (Math.abs(event.pageY - drag.startY) > SLOP) cancelDrag();
+    // A finger that travels before the hold expires was trying to scroll —
+    // sideways through the habits, or down the page. Either cancels.
+    if (Math.abs(gridX(event) - drag.startX) > SLOP
+      || Math.abs(event.clientY - drag.startY) > SLOP) cancelDrag();
     return;
   }
-  drag.pageY = event.pageY;
+  drag.x = gridX(event);
   updateDrag();
-  autoScroll(event.clientY);
+  autoScroll(event.clientX);
 });
 
 function updateDrag() {
-  const dy = drag.pageY - drag.startY;
-  drag.el.style.transform = `translateY(${dy}px)`;
+  const dx = drag.x - drag.startX;
+  drag.el.style.transform = `translateX(${dx}px)`;
 
-  const to = slotFor(drag.rects[drag.from].centre + dy);
+  const to = slotFor(drag.rects[drag.from].centre + dx);
   if (to === drag.to) return;
   drag.to = to;
 
-  // Cards between the old slot and the new one slide by exactly the space the
-  // dragged card vacated, so a list of uneven card heights still lines up.
-  drag.cards.forEach((c, i) => {
+  // Columns between the old slot and the new one slide by exactly the space
+  // the dragged column vacated, so uneven widths would still line up.
+  drag.cols.forEach((c, i) => {
     if (i === drag.from) return;
     let move = 0;
     if (to > drag.from && i > drag.from && i <= to) move = -drag.shift;
     else if (to < drag.from && i >= to && i < drag.from) move = drag.shift;
-    c.style.transform = move ? `translateY(${move}px)` : '';
+    c.style.transform = move ? `translateX(${move}px)` : '';
   });
 }
 
-// Which slot the card would land in. The comparison has to be against the
-// layout with the card *removed* — once it lifts, everything below closes the
-// gap, so measuring against the original centres lands it a slot too far.
+// Which slot the column would land in. The comparison has to be against the
+// layout with the column *removed* — once it lifts, everything to its right
+// closes the gap, so measuring against the original centres lands it a slot
+// too far.
 function slotFor(centre) {
   const { rects, from, gap } = drag;
-  const height = rects[from].height;
+  const width = rects[from].width;
   const others = rects.filter((_, i) => i !== from);
 
-  let top = rects[0].top;
+  let left = rects[0].left;
   let best = 0;
   let bestDistance = Infinity;
 
   for (let slot = 0; slot < rects.length; slot++) {
-    const distance = Math.abs(top + height / 2 - centre);
+    const distance = Math.abs(left + width / 2 - centre);
     if (distance < bestDistance) {
       bestDistance = distance;
       best = slot;
     }
-    if (slot < others.length) top += others[slot].height + gap;
+    if (slot < others.length) left += others[slot].width + gap;
   }
   return best;
 }
 
-// Dragging to the edge of the screen scrolls the list, which is the only way
-// to move a card past the fold on a phone.
-function autoScroll(clientY) {
-  const above = clientY - EDGE;
-  const below = clientY - (window.innerHeight - EDGE);
-  drag.scrollBy = above < 0 ? Math.max(above, -24) / 3 : below > 0 ? Math.min(below, 24) / 3 : 0;
+// Dragging to the edge of the grid scrolls it, which is the only way to move
+// a column past the fold on a phone.
+function autoScroll(clientX) {
+  const box = grid.getBoundingClientRect();
+  const before = clientX - (box.left + EDGE);
+  const after = clientX - (box.right - EDGE);
+  drag.scrollBy = before < 0 ? Math.max(before, -24) / 3 : after > 0 ? Math.min(after, 24) / 3 : 0;
   if (drag.scrollBy && !drag.raf) stepScroll();
 }
 
@@ -474,13 +432,13 @@ function stepScroll() {
     if (!drag || !drag.active) return;
     drag.raf = 0;
     if (!drag.scrollBy) return;
-    const before = window.scrollY;
-    window.scrollBy(0, drag.scrollBy);
-    const moved = window.scrollY - before;
+    const before = grid.scrollLeft;
+    grid.scrollLeft += drag.scrollBy;
+    const moved = grid.scrollLeft - before;
     if (moved) {
-      // A still finger over a scrolling page has still moved down the
-      // document, and the drag works in document coordinates.
-      drag.pageY += moved;
+      // A still finger over a scrolling grid has still moved across the
+      // habits, and the drag works in the grid's scrolled coordinates.
+      drag.x += moved;
       updateDrag();
       stepScroll();
     }
@@ -506,10 +464,16 @@ function endDrag(event) {
     cancelDrag();
     return;
   }
-  const { cards, from, to } = drag;
-  const order = cards.map((c) => c._habit.id);
+  const { cols, from, to } = drag;
+  const order = cols.map((c) => c._habit.id);
   order.splice(to, 0, ...order.splice(from, 1));
 
+  // The pointerup is followed by a click on a column this render is about to
+  // replace; without this it would also open the detail sheet.
+  suppressClick = true;
+  // Where the grid is scrolled to is now the truth, not what the drag started
+  // with: auto-scroll may have moved it.
+  scrollLeft = grid.scrollLeft;
   cleanupDrag();
   if (to !== from) {
     store.reorderHabits(order);
@@ -536,7 +500,7 @@ function cleanupDrag() {
     } catch {
       // the pointer is already gone, which is the state we wanted anyway
     }
-    for (const c of drag.cards) c.style.transform = '';
+    for (const c of drag.cols) c.style.transform = '';
   }
   drag = null;
 }
@@ -612,83 +576,151 @@ habitForm.addEventListener('submit', () => {
   render();
 });
 
-/* ---------- amount sheet (money cards, and manual logging) ---------- */
+/* ---------- logging one day ---------- */
 
-// `manual` is the “Log manually” path, shared by every kind: it adds a date
-// picker so an entry can be backdated. A money card tap opens the same sheet
-// without it, because tapping a card always means “now”.
-function openAmountSheet(habit, { manual = false } = {}) {
-  amountId = habit.id;
-  amountManual = manual;
-  amountForm.reset();
-  $('#amount-title').textContent = habit.name;
-  $('#amount-label').textContent =
+// The cell that was tapped decides the habit and the day, so the sheet only
+// has to answer "how much". Every kind shares it, which is why manual logging
+// stopped needing a date picker: the grid is the date picker.
+function openDaySheet(habit, dayIndex) {
+  daySheet = { habitId: habit.id, dayIndex };
+  dayForm.reset();
+
+  $('#day-title').textContent = habit.name;
+  $('#day-amount-label').textContent =
     habit.kind === 'time' ? 'Minutes'
       : habit.kind === 'money' ? `Amount (${currencySymbol()})`
         : `How many${habit.unit ? ` (${habit.unit})` : ''}`;
-  amountForm.amount.placeholder =
+  dayForm.amount.placeholder =
     habit.kind === 'time' ? '30' : habit.kind === 'money' ? '0.00' : '1';
 
-  const recent = store.recentAmounts(habit.id);
-  $('#amount-quick').innerHTML = recent
+  // A tally that writes on the tap, because "one more coffee" should not be a
+  // form. Money has no natural increment, and time has a stopwatch instead.
+  $('#day-step').hidden = habit.kind !== 'count';
+  // A stopwatch only makes sense on the day that is still happening.
+  $('#day-timer').hidden = !(habit.kind === 'time' && dayIndex === todayIndex);
+
+  const recent = habit.kind === 'money' ? store.recentAmounts(habit.id) : [];
+  $('#day-quick').innerHTML = recent
     .map((a) => `<button type="button" class="chip" data-amount="${a}">${escapeHtml(formatAmount(habit, a))}</button>`)
     .join('');
 
-  // The date defaults to the week on screen: today when that is this week,
-  // otherwise its last day, which is where a plain log would have landed.
-  const range = store.weekRange(weekOffset);
-  $('#amount-date-field').hidden = !manual;
-  amountForm.date.value = toDateInput(weekOffset === 0 ? Date.now() : range.endMs - 1);
-
-  // With a date picker on screen the week is whatever it says, so the hint
-  // only has something to add when logging is pinned to the viewed week.
-  $('#amount-hint').textContent =
-    manual || weekOffset === 0 ? '' : `Logs into ${store.formatWeekRange(range)}.`;
-
-  amountDialog.showModal();
-  setTimeout(() => amountForm.amount.focus(), 60);
+  paintDaySheet();
+  dayDialog.showModal();
+  if (habit.kind !== 'count') setTimeout(() => dayForm.amount.focus(), 60);
 }
 
-// A chip is a repeat of a known amount, so it commits on one tap rather than
-// just filling the box.
-$('#amount-quick').addEventListener('click', (event) => {
-  const chip = event.target.closest('[data-amount]');
-  if (!chip) return;
-  amountForm.amount.value = chip.dataset.amount;
-  amountForm.requestSubmit();
+// Re-read rather than remembered: the stepper and the stopwatch both write
+// while the sheet is open.
+function paintDaySheet() {
+  if (!daySheet) return;
+  const habit = store.getHabit(daySheet.habitId);
+  const day = days[daySheet.dayIndex];
+  if (!habit || !day) return;
+
+  const startedAt = store.runningTimers().get(habit.id);
+  const live = startedAt && habit.kind === 'time' && daySheet.dayIndex === todayIndex
+    ? (Date.now() - startedAt) / 60000
+    : 0;
+  const used = store.usedInDay(habit.id, day) + live;
+
+  const when = day.start.toLocaleDateString(undefined, {
+    weekday: 'long', day: 'numeric', month: 'short',
+  });
+  const limit = habit.daily_limit
+    ? ` · limit ${formatAmount(habit, habit.daily_limit)}`
+    : '';
+  const sub = $('#day-sub');
+  sub.textContent = `${when} · ${formatAmount(habit, used)} logged${limit}`;
+  const slack = habit.kind === 'money' ? 0.005 : 0;
+  sub.classList.toggle('over', Boolean(habit.daily_limit) && used - habit.daily_limit > slack);
+
+  $('#day-tally').textContent = String(Math.round(used * 10) / 10);
+  $('[data-act="day-dec"]', dayDialog).disabled = used <= 0;
+
+  const timerBtn = $('#day-timer');
+  timerBtn.textContent = startedAt ? `Stop timer · ${formatClock(Date.now() - startedAt)}` : 'Start timer';
+  timerBtn.classList.toggle('running', Boolean(startedAt));
+}
+
+// Today keeps the real clock time; any other day lands at midday, far enough
+// from both edges that a DST shift cannot slide it into a neighbouring day.
+function logToDay(habit, dayIndex, amount) {
+  const day = days[dayIndex];
+  const d = day.start;
+  const when = dayIndex === todayIndex
+    ? Date.now()
+    : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12).getTime();
+
+  const before = dayTotal(habit, day);
+  store.addManualEntry(habit.id, amount, when);
+  if (crossedDailyLimit(habit, day, before)) {
+    const whose = dayIndex === todayIndex ? "today's" : "that day's";
+    toast(`Past ${whose} ${formatAmount(habit, habit.daily_limit)} limit`);
+  }
+}
+
+dayDialog.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-act], [data-amount]');
+  if (!button || !daySheet) return;
+  const habit = store.getHabit(daySheet.habitId);
+  const day = days[daySheet.dayIndex];
+
+  // A chip is a repeat of a known amount, so it commits on one tap.
+  if (button.dataset.amount) {
+    logToDay(habit, daySheet.dayIndex, Number(button.dataset.amount));
+    dayDialog.close();
+    render();
+    if (detailDialog.open) openDetail(habit.id);
+    return;
+  }
+
+  switch (button.dataset.act) {
+    case 'day-inc':
+      logToDay(habit, daySheet.dayIndex, 1);
+      buzz(10);
+      break;
+    case 'day-dec':
+      if (!store.decrementDay(habit.id, day)) return toast('Nothing logged that day');
+      buzz(10);
+      break;
+    case 'day-timer':
+      if (timers.has(habit.id)) {
+        const before = dayTotal(habit, day);
+        const minutes = store.stopTimer(habit.id);
+        toast(minutes ? `Logged ${formatMinutes(minutes)} of ${habit.name}` : 'Too short to log');
+        if (crossedDailyLimit(habit, day, before)) {
+          toast(`Past today's ${formatAmount(habit, habit.daily_limit)} limit`);
+        }
+      } else {
+        store.startTimer(habit.id);
+      }
+      break;
+    default:
+      return;
+  }
+  // The grid behind the sheet is the point of all this, so it keeps up.
+  render();
+  paintDaySheet();
+  if (detailDialog.open) openDetail(habit.id);
 });
 
-// Cancel and Escape both close without submitting; drop the pending habit so
-// it cannot leak into a later sheet.
-amountDialog.addEventListener('close', () => { amountId = null; amountManual = false; });
+// Cancel and Escape both close without submitting; drop the pending day so it
+// cannot leak into a later sheet.
+dayDialog.addEventListener('close', () => { daySheet = null; });
 
-amountForm.addEventListener('submit', () => {
-  const habit = amountId ? store.getHabit(amountId) : null;
-  const manual = amountManual;
-  amountId = null;
-  if (!habit) return;
+dayForm.addEventListener('submit', () => {
+  if (!daySheet) return;
+  const habit = store.getHabit(daySheet.habitId);
+  const dayIndex = daySheet.dayIndex;
 
-  const data = new FormData(amountForm);
-  const amount = Number(data.get('amount'));
+  const amount = Number(new FormData(dayForm).get('amount'));
+  // An empty box means the sheet was used as a stepper and is just closing.
   if (!Number.isFinite(amount) || amount === 0) return;
 
-  const range = store.weekRange(weekOffset);
-  const picked = manual ? fromDateInput(data.get('date')) : null;
-  // An empty or unparseable date falls back to the old behaviour rather than
-  // dropping the entry the user just typed.
-  const when = picked ?? (weekOffset === 0 ? Date.now() : range.endMs - 1);
-
-  const beforeToday = dayTotal(habit);
-  store.addManualEntry(habit.id, amount, when);
+  logToDay(habit, dayIndex, amount);
   buzz(10);
-  // A date outside the week on screen would log somewhere the user cannot
-  // see, so follow the entry to its week instead.
-  if (when < range.startMs || when >= range.endMs) weekOffset = store.weekOffsetOf(new Date(when));
   render();
   if (detailDialog.open) openDetail(habit.id);
-  // A backdated entry cannot cross *today's* limit, so the two never collide.
-  const note = crossedDailyLimit(habit, beforeToday) ? dailyLimitNote(habit) : '';
-  toast(`Logged ${formatAmount(habit, amount)}${manual ? ` on ${formatDay(when)}` : ''}${note}`);
 });
 
 /* ---------- detail sheet ---------- */
@@ -748,9 +780,6 @@ detailDialog.addEventListener('click', (event) => {
         render();
         toast('Habit deleted');
       }
-      break;
-    case 'log-manual':
-      openAmountSheet(habit, { manual: true });
       break;
     case 'del-entry': {
       const id = Number(button.closest('[data-entry]').dataset.entry);
@@ -900,7 +929,11 @@ async function boot() {
   await db.open();
   render();
 
-  setInterval(tick, 1000);
+  setInterval(() => {
+    tick();
+    // The sheet shows the same running clock, and it is open over the grid.
+    if (dayDialog.open) paintDaySheet();
+  }, 1000);
 
   // A running timer must survive the app being backgrounded or killed, so the
   // database is flushed whenever the page goes away and re-read on return.

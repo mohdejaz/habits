@@ -81,13 +81,6 @@ export function weekRange(offset = 0) {
   return { start, end, startMs: start.getTime(), endMs: end.getTime() };
 }
 
-// Which week view holds `date`: 0 = this week, -1 = last week, and so on.
-// Weeks are a whole number of days apart, so rounding absorbs any DST hour.
-export function weekOffsetOf(date) {
-  const diff = weekStart(date).getTime() - weekStart(new Date()).getTime();
-  return Math.round(diff / (7 * 86400000));
-}
-
 export function formatWeekRange({ start, end }) {
   const last = new Date(end.getTime() - 1);
   const sameMonth = start.getMonth() === last.getMonth();
@@ -108,6 +101,24 @@ export function dayRange(date = new Date()) {
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
   return { start, end, startMs: start.getTime(), endMs: end.getTime() };
+}
+
+// The seven local midnight-to-midnight days of a week. Built by calendar
+// arithmetic rather than by adding 86400000 seven times, because the week
+// containing a DST change has a 23- and a 25-hour day in it.
+export function weekDays(range) {
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const start = new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate() + i);
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
+    days.push({ index: i, start, end, startMs: start.getTime(), endMs: end.getTime() });
+  }
+  return days;
+}
+
+// Which of those days holds `ms`, or -1 if it falls outside the week.
+export function dayIndexOf(ms, days) {
+  return days.findIndex((d) => ms >= d.startMs && ms < d.endMs);
 }
 
 /* ---------- habits ---------- */
@@ -185,24 +196,42 @@ export function usedInWeek(habitId, { startMs, endMs }) {
   return row.total;
 }
 
-export function usageForWeek(range) {
-  const rows = db.all(
-    `SELECT habit_id, COALESCE(SUM(amount), 0) AS total
-       FROM entries
-      WHERE started_at >= ? AND started_at < ?
-      GROUP BY habit_id`,
-    [range.startMs, range.endMs]
-  );
-  return new Map(rows.map((r) => [r.habit_id, r.total]));
-}
-
-// The same sums over one day, for habits that also carry a daily limit.
+// The same sum over one day, for habits that also carry a daily limit.
 export function usedInDay(habitId, range = dayRange()) {
   return usedInWeek(habitId, range);
 }
 
-export function usageForDay(range = dayRange()) {
-  return usageForWeek(range);
+// The whole grid in one query: habit id -> seven daily totals. Bucketing is
+// done here rather than in SQL because SQLite would have to be told about the
+// local timezone to group by calendar day, and it is not.
+export function usageByDay(range) {
+  const days = weekDays(range);
+  const rows = db.all(
+    'SELECT habit_id, amount, started_at FROM entries WHERE started_at >= ? AND started_at < ?',
+    [range.startMs, range.endMs]
+  );
+  const grid = new Map();
+  for (const r of rows) {
+    const day = dayIndexOf(r.started_at, days);
+    if (day < 0) continue;
+    if (!grid.has(r.habit_id)) grid.set(r.habit_id, new Array(7).fill(0));
+    grid.get(r.habit_id)[day] += r.amount;
+  }
+  return grid;
+}
+
+// The most recent entry of one day, which is what taking a count back down
+// removes — the same honesty as the old minus button, one day at a time.
+export function decrementDay(habitId, day) {
+  const last = db.one(
+    `SELECT id FROM entries
+      WHERE habit_id = ? AND started_at >= ? AND started_at < ?
+      ORDER BY started_at DESC, id DESC LIMIT 1`,
+    [habitId, day.startMs, day.endMs]
+  );
+  if (!last) return false;
+  db.run('DELETE FROM entries WHERE id = ?', [last.id]);
+  return true;
 }
 
 export function entriesForWeek(habitId, range) {
@@ -216,30 +245,6 @@ export function entriesForWeek(habitId, range) {
 
 export function deleteEntry(id) {
   db.run('DELETE FROM entries WHERE id = ?', [id]);
-}
-
-/* ---------- count habits ---------- */
-
-export function increment(habitId, by = 1) {
-  const now = Date.now();
-  db.run(
-    'INSERT INTO entries (habit_id, amount, started_at, ended_at) VALUES (?, ?, ?, ?)',
-    [habitId, by, now, now]
-  );
-}
-
-// The minus button undoes the most recent tally in the week being viewed
-// rather than recording a negative amount, so the log stays honest.
-export function decrement(habitId, range) {
-  const last = db.one(
-    `SELECT id FROM entries
-      WHERE habit_id = ? AND started_at >= ? AND started_at < ?
-      ORDER BY started_at DESC, id DESC LIMIT 1`,
-    [habitId, range.startMs, range.endMs]
-  );
-  if (!last) return false;
-  db.run('DELETE FROM entries WHERE id = ?', [last.id]);
-  return true;
 }
 
 /* ---------- money habits ---------- */
