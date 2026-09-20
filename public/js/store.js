@@ -234,6 +234,35 @@ export function decrementDay(habitId, day) {
   return true;
 }
 
+/* ---------- history ---------- */
+
+// The last `count` weeks, oldest first, each one a range like weekRange gives.
+export function recentWeeks(count) {
+  const weeks = [];
+  for (let i = count - 1; i >= 0; i--) weeks.push({ offset: -i, ...weekRange(-i) });
+  return weeks;
+}
+
+// habit id -> one total per week, in the same order. Budgets reset every week,
+// so this is the only way to see whether a habit is going anywhere: the grid
+// itself can only ever show one week.
+export function weeklyTotals(weeks) {
+  const first = weeks[0];
+  const last = weeks[weeks.length - 1];
+  const rows = db.all(
+    'SELECT habit_id, amount, started_at FROM entries WHERE started_at >= ? AND started_at < ?',
+    [first.startMs, last.endMs]
+  );
+  const totals = new Map();
+  for (const r of rows) {
+    const i = weeks.findIndex((w) => r.started_at >= w.startMs && r.started_at < w.endMs);
+    if (i < 0) continue;
+    if (!totals.has(r.habit_id)) totals.set(r.habit_id, new Array(weeks.length).fill(0));
+    totals.get(r.habit_id)[i] += r.amount;
+  }
+  return totals;
+}
+
 export function entriesForWeek(habitId, range) {
   return db.all(
     `SELECT * FROM entries

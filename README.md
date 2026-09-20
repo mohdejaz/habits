@@ -10,6 +10,10 @@ so recording Tuesday's coffees on Thursday is the same gesture as recording
 today's. The whole week is one picture — where the budget has gone, and which
 days it went on.
 
+Below the grid, a strip of bars per habit shows the last twelve weeks against
+budget — the one thing a week view cannot tell you, which is whether anything is
+getting better.
+
 Everything runs offline: SQLite is compiled to WebAssembly and the database file
 lives in the browser, so there is no server and no account.
 
@@ -109,6 +113,40 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
 - **Compact** (Settings → Cards) narrows the columns and the day labels without
   dropping a day, so more habits fit before anything has to be scrolled to.
 
+## Seeing more than one week
+
+Budgets reset every week and the grid can only ever show one, so on its own the
+app has no memory. The strip underneath is where that is answered: one row per
+habit, one bar per week, twelve weeks of them.
+
+It fills the space transposing left behind. Seven rows is seven rows however many
+habits there are — they grow sideways now — so the gap below the grid is
+permanent rather than an empty-state artefact.
+
+- **Bars are scaled against the budget or the worst week, whichever is larger**,
+  and the budget is drawn across as a dashed line. A week can then be read
+  against what it was meant to be, not only against the other weeks. Over budget
+  goes red, the same as everywhere else.
+- **Weeks before the habit existed are not zero weeks, they are nothing.** They
+  show as faint stubs and are left out of the average — otherwise every habit
+  created recently would be libelled by the weeks before it existed.
+- **The current week is excluded from the average too**, since it is still being
+  filled in. A Monday would otherwise drag every habit down.
+- `over 3×` counts the complete weeks that went past budget. It is the number
+  that says whether a budget is a budget or a wish.
+- **Tapping a bar takes the grid to that week**, and the bar for whichever week
+  the grid is showing is ticked underneath. That is a much faster way back
+  through history than pressing `‹` eleven times.
+
+One trap worth recording, since it cost an hour to find: the bar modifier
+classes are `zero`, `before`, `now` and `viewing`, and the obvious name for the
+first of those — `empty` — silently breaks the layout. A bare
+`.empty { padding: 12vh 32px }` already dresses the no-habits-yet screen, so
+`.tbar.empty` inherits 101px of padding, blows the flex row out and collapses
+the remaining bars to zero width. Nothing about the DOM looks wrong; only the
+geometry gives it away. Compound modifiers in this stylesheet are safe, bare
+ones are not.
+
 ## Your data
 
 The database is a real SQLite file kept as bytes in IndexedDB under this origin. That
@@ -170,7 +208,9 @@ node tools/e2e.mjs # drives real Chrome: budgets for all three kinds, logging
                    # limits colouring the day and not the week, the day column
                    # staying frozen while the habits scroll, timer persistence,
                    # sideways drag-to-reorder by the name, that holding a cell
-                   # never drags its column, compact columns, offline load,
+                   # never drags its column, the twelve-week trend (including
+                   # that every bar gets its share of the width, which is how a
+                   # colliding class name shows up), compact columns, offline load,
                    # export/import round-trip, and upgrading a database written
                    # before money existed
 ```

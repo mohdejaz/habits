@@ -1,6 +1,6 @@
 // Service worker — the app is entirely offline, so the whole shell is
 // precached and served cache-first. Bump CACHE to ship an update.
-const CACHE = 'habit-budget-v7';
+const CACHE = 'habit-budget-v8';
 
 const SHELL = [
   '.',

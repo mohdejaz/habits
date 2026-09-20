@@ -578,6 +578,74 @@ await page2.waitForFunction(() => document.querySelectorAll('.hcol').length === 
 const added = await page2.$eval('.hcol:nth-child(2) [data-left]', (e) => e.textContent);
 check('money habits can be added to an upgraded database', added === '€60.00 left', added);
 
+/* ---------- the trend strip ---------- */
+
+// Twelve weeks of history is not something a test can click its way to, so it
+// is written through the store and then read back off the chart.
+await page2.evaluate(async () => {
+  const store = await import('./js/store.js');
+  const db = await import('./js/db.js');
+  const habit = store.listHabits().find((h) => h.name === 'Walking');
+  const weeks = store.recentWeeks(12);
+  db.run('DELETE FROM entries WHERE habit_id = ?', [habit.id]);
+  // Born four weeks into the window, so the first four are "before", not zero.
+  db.run('UPDATE habits SET created_at = ? WHERE id = ?', [weeks[4].startMs, habit.id]);
+  const amounts = [0, 0, 0, 0, 100, 200, 100, 100, 200, 100, 100, 999];
+  weeks.forEach((w, i) => {
+    if (amounts[i]) store.addManualEntry(habit.id, amounts[i], w.startMs + 3 * 86400000 + 36000000);
+  });
+  await db.saveNow();
+});
+await page2.reload({ waitUntil: 'networkidle0' });
+await page2.waitForSelector('.tbar');
+
+const line = (name) => page2.evaluate((n) => {
+  const el = [...document.querySelectorAll('.tline')].find((l) => l.querySelector('.tline-name').textContent === n);
+  return {
+    stat: el.querySelector('.tline-stat').textContent,
+    budget: el.querySelector('.tbars').style.getPropertyValue('--budget'),
+    bars: [...el.querySelectorAll('.tbar')].map((b) => ({
+      cls: b.className.replace('tbar', '').trim(),
+      width: Math.round(b.getBoundingClientRect().width),
+      height: Math.round(b.querySelector('i').getBoundingClientRect().height),
+    })),
+  };
+}, name);
+
+const walking = await line('Walking');
+check('the trend draws one bar per week', walking.bars.length === 12, String(walking.bars.length));
+// A modifier class that collides with a global rule silently collapses the
+// flex row, which is invisible in the DOM and obvious only in the geometry.
+check('every bar gets its share of the width',
+  walking.bars.every((b) => b.width === walking.bars[0].width && b.width > 10),
+  walking.bars.map((b) => b.width).join(','));
+check('weeks before the habit existed are marked, not counted as zero',
+  walking.bars.slice(0, 4).every((b) => b.cls.includes('before'))
+  && !walking.bars[4].cls.includes('before'),
+  walking.bars.map((b) => b.cls).join('|'));
+check('this week is marked as the one still being filled in',
+  walking.bars[11].cls.includes('now'));
+check('weeks over budget are flagged',
+  walking.bars[5].cls.includes('over') && !walking.bars[4].cls.includes('over'),
+  walking.bars.map((b) => b.cls).join('|'));
+
+// 100,200,100,100,200,100,100 over the seven complete weeks it has existed for
+// — the 999 of this half-finished week must not drag the average anywhere.
+check('the average covers the complete weeks since the habit was created',
+  walking.stat === 'avg 2h 9m · over 2×', walking.stat);
+check('a taller bar is a bigger week',
+  walking.bars[5].height > walking.bars[4].height,
+  `${walking.bars[4].height} vs ${walking.bars[5].height}`);
+
+await page2.click('.tline .tbar:nth-child(6)');
+await page2.waitForFunction(() => document.querySelector('#week-title').textContent !== 'This week');
+check('tapping a bar takes the grid to that week', await page2.evaluate(() => {
+  const bars = [...document.querySelectorAll('.tline')[0].querySelectorAll('.tbar')];
+  return bars[5].classList.contains('viewing') && !bars[11].classList.contains('viewing');
+}));
+
+await page2.screenshot({ path: `${SP}/shot-trend.png` });
+
 report();
 await browser.close();
 process.exit(bad.length || errors.length ? 1 : 0);

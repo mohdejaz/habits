@@ -11,6 +11,7 @@ const list = $('#habit-list');
 // scrolls" during a drag is this element and not the window.
 const grid = $('#grid');
 const daycol = $('#daycol');
+const trend = $('#trend');
 const emptyState = $('#empty');
 const habitDialog = $('#habit-dialog');
 const habitForm = $('#habit-form');
@@ -151,6 +152,7 @@ function render() {
 
   renderDayColumn();
   list.replaceChildren(...habits.map((h) => column(h, usage.get(h.id) || new Array(7).fill(0))));
+  renderTrend(habits);
   // A re-render resets the scroll, which would hide whichever habit the user
   // had scrolled to. Keeping it is cheap and much less jarring.
   grid.scrollLeft = scrollLeft;
@@ -254,6 +256,85 @@ function cellLabel(habit, index, value) {
   });
   return `${habit.name}, ${when}, ${value > 0 ? formatAmount(habit, value) : 'nothing'} logged`;
 }
+
+/* ---------- the trend strip ---------- */
+
+const TREND_WEEKS = 12;
+
+function renderTrend(habits) {
+  trend.hidden = habits.length === 0;
+  if (trend.hidden) return;
+
+  const weeks = store.recentWeeks(TREND_WEEKS);
+  const totals = store.weeklyTotals(weeks);
+  $('#trend-head').textContent = `Last ${TREND_WEEKS} weeks`;
+  $('#trend-from').textContent = `${TREND_WEEKS} weeks ago`;
+  $('#trend-lines').replaceChildren(
+    ...habits.map((h) => trendLine(h, totals.get(h.id) || new Array(weeks.length).fill(0), weeks))
+  );
+}
+
+function trendLine(habit, series, weeks) {
+  const el = document.createElement('div');
+  el.className = 'tline';
+  el.style.setProperty('--habit-color', habit.color);
+
+  // Scaled against the budget or the worst week, whichever is larger, so the
+  // budget line always lands somewhere on the chart and bars stay comparable
+  // to it rather than only to each other.
+  const peak = Math.max(habit.weekly_budget, ...series) || 1;
+
+  // Weeks before the habit existed are not zero weeks, they are nothing, and
+  // averaging them in would libel every habit created recently. The current
+  // week is still being filled in, so it is left out too.
+  const born = weeks.findIndex((w) => w.endMs > habit.created_at);
+  const firstReal = born < 0 ? weeks.length : born;
+  const complete = series.slice(firstReal, series.length - 1);
+  const slack = habit.kind === 'money' ? 0.005 : 0;
+  const overWeeks = complete.filter((v) => v - habit.weekly_budget > slack).length;
+  const average = complete.length
+    ? complete.reduce((a, b) => a + b, 0) / complete.length
+    : null;
+
+  const bars = weeks
+    .map((week, i) => {
+      const value = series[i];
+      const before = i < firstReal;
+      const classes = [
+        'tbar',
+        before ? 'before' : '',
+        value <= 0 ? 'zero' : '',
+        !before && value - habit.weekly_budget > slack ? 'over' : '',
+        week.offset === 0 ? 'now' : '',
+        week.offset === weekOffset ? 'viewing' : '',
+      ];
+      const height = Math.max(2, Math.round((value / peak) * 100));
+      const label = `${habit.name}, ${store.formatWeekRange(week)}, ${
+        before ? 'before this habit existed' : formatAmount(habit, value)}`;
+      return `<button type="button" class="${classes.filter(Boolean).join(' ')}"
+        data-offset="${week.offset}" aria-label="${escapeHtml(label)}"
+        ><i style="height:${value > 0 ? height : 2}%"></i></button>`;
+    })
+    .join('');
+
+  el.innerHTML = `
+    <div class="tline-head">
+      <span class="tline-name">${escapeHtml(habit.name)}</span>
+      <span class="tline-stat">${average === null
+        ? 'no full week yet'
+        : `avg ${escapeHtml(formatAmount(habit, average))}${overWeeks ? ` · over ${overWeeks}×` : ''}`}</span>
+    </div>
+    <div class="tbars" style="--budget:${Math.min(100, (habit.weekly_budget / peak) * 100)}%">${bars}</div>`;
+  return el;
+}
+
+// A bar is the week it stands for, so tapping one takes the grid there.
+trend.addEventListener('click', (event) => {
+  const bar = event.target.closest('[data-offset]');
+  if (!bar) return;
+  weekOffset = Number(bar.dataset.offset);
+  render();
+});
 
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
