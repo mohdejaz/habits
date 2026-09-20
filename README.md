@@ -96,8 +96,16 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   you are instead of clamping at zero. Passing a daily limit is a separate,
   softer state: the cell goes amber and the column is left alone.
 - **Tap a habit's name** for this week's entries, editing, hiding and deletion.
-- `‹` / `›` move between weeks. An earlier week has no "today", so every one of
-  its days is editable and none of them is marked.
+- `‹` / `›` move between weeks, and the header names the one you are on —
+  "This week", "Last week", then "6 weeks ago". It deliberately does not fall
+  through to the date range: that is what the line underneath already says, and
+  printing both put the same dates on screen twice.
+- **Tapping any date goes back to this week**, and while you are away the
+  otherwise-empty corner above the day column carries a `Today` chip saying so.
+  Tapping a trend bar can drop you eleven weeks back, so there has to be a way
+  home that is not eleven presses of `‹`.
+- An earlier week has no "today", so every one of its days is editable and none
+  of them is marked.
 - **Reordering** is a press and hold on the habit's *name*, then a drag
   sideways. The cells are targets in their own right, so only the name is a
   handle. Holding for 300ms is what separates a reorder from a scroll — moving

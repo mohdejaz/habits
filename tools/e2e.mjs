@@ -279,6 +279,30 @@ await page.waitForFunction(() => document.querySelector('#week-title').textConte
 check('this week is untouched by it', (await colState(2)).left === '6 cups left', (await colState(2)).left);
 check('cannot navigate past this week', await page.$eval('#week-next', (b) => b.disabled));
 
+// Further back than "last week" used to fall through to the range, printing
+// the same dates the line underneath already carries.
+await page.click('#week-prev');
+await page.click('#week-prev');
+await page.click('#week-prev');
+await page.waitForFunction(() => document.querySelector('#week-title').textContent === '3 weeks ago');
+check('an older week is named, not printed twice', await page.evaluate(() => {
+  const title = document.querySelector('#week-title').textContent;
+  const range = document.querySelector('#week-range').textContent;
+  return title === '3 weeks ago' && /\d/.test(range) && title !== range;
+}), await page.$eval('#week-range', (e) => e.textContent));
+
+// Every date is a way back, and the corner says so.
+check('the corner offers the way back', await page.$eval('#daycol', (e) => Boolean(e.querySelector('[data-today]'))));
+await page.click('.dlabel');
+await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
+check('tapping a date returns to this week', true);
+check('and the corner stops offering it', await page.$eval('#daycol', (e) => !e.querySelector('[data-today]')));
+check('a date on this week does nothing', await (async () => {
+  await page.click('.dlabel');
+  await new Promise((r) => setTimeout(r, 120));
+  return (await page.$eval('#week-title', (e) => e.textContent)) === 'This week';
+})());
+
 await page.screenshot({ path: `${SP}/shot-week.png` });
 
 /* ---------- the detail sheet, opened from the name ---------- */
@@ -423,6 +447,9 @@ check('compact narrows the column', compact < comfortable, `${comfortable}px -> 
 check('compact keeps every day tappable', (await colState(1)).cells.length === 7);
 check('the frozen column shrinks with it',
   (await page.$eval('.dlabel', (e) => Math.round(e.getBoundingClientRect().height))) < 50);
+// A day column narrower than its own label spills sideways under the cells.
+check('compact still fits the longest day label', await page.evaluate(() =>
+  [...document.querySelectorAll('.dlabel')].every((e) => e.scrollWidth <= e.clientWidth)));
 await page.screenshot({ path: `${SP}/shot-compact.png` });
 
 await page.reload({ waitUntil: 'networkidle0' });

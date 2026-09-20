@@ -114,15 +114,43 @@ body {
   /* opaque, or the cells scrolling underneath show through */
   background: var(--bg);
 }
-.corner { height: var(--headh); }
+.corner { height: var(--headh); display: flex; align-items: center; }
+
+.today-btn {
+  padding: 5px 9px;
+  border: 1px solid var(--accent);
+  border-radius: 99px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  cursor: pointer;
+}
+.today-btn:active { background: var(--surface-2); }
 
 .dlabel {
   height: var(--cellh);
   display: flex;
   align-items: baseline;
   gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
   font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: default;
 }
+/* Only worth pressing when there is somewhere to go back to. */
+.daycol.away .dlabel { cursor: pointer; }
+.daycol.away .dlabel:active { opacity: .6; }
+/* A single word cannot break, so a column too narrow for it spills sideways
+   under the cells rather than wrapping. Belt and braces either way. */
+.dlabel .dow,
+.dlabel .dom { white-space: nowrap; flex: 0 0 auto; }
 .dlabel .dow { font-size: 15px; font-weight: 650; }
 .dlabel .dom { font-size: 13px; color: var(--muted); }
 .dlabel.today .dow,
@@ -277,7 +305,7 @@ body {
    before anything has to be scrolled to. */
 
 .grid.compact {
-  --daycol: 66px;
+  --daycol: 72px;   /* 66 left "Wed 16" 2px short of its column */
   --habitcol: 88px;
   --headh: 56px;
   --cellh: 40px;

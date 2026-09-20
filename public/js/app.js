@@ -140,8 +140,12 @@ function render() {
   // happened yet. An earlier week has neither.
   todayIndex = weekOffset === 0 ? store.dayIndexOf(Date.now(), days) : -1;
 
+  // Anything further back used to fall through to the range, which is exactly
+  // what the line underneath already says — the same dates twice, stacked.
   $('#week-title').textContent =
-    weekOffset === 0 ? 'This week' : weekOffset === -1 ? 'Last week' : store.formatWeekRange(range);
+    weekOffset === 0 ? 'This week'
+      : weekOffset === -1 ? 'Last week'
+        : `${-weekOffset} weeks ago`;
   $('#week-range').textContent = store.formatWeekRange(range);
   $('#week-next').disabled = weekOffset >= 0;
 
@@ -162,11 +166,20 @@ function render() {
 // The frozen column: a blank corner to clear the habit headers, then a label
 // per day.
 function renderDayColumn() {
+  // Away from this week, every date is a way back to it — and the corner,
+  // which is otherwise dead space, says so out loud.
+  const away = weekOffset !== 0;
+  daycol.classList.toggle('away', away);
+
   const corner = document.createElement('div');
   corner.className = 'corner';
+  if (away) corner.innerHTML = '<button type="button" class="today-btn" data-today>Today</button>';
+
   daycol.replaceChildren(corner, ...days.map((day) => {
-    const el = document.createElement('div');
+    const el = document.createElement('button');
+    el.type = 'button';
     el.className = 'dlabel';
+    if (away) el.setAttribute('aria-label', `Back to this week`);
     if (day.index === todayIndex) el.classList.add('today');
     if (todayIndex >= 0 && day.index > todayIndex) el.classList.add('future');
     el.innerHTML =
@@ -345,6 +358,13 @@ function escapeHtml(s) {
 grid.addEventListener('scroll', () => {
   if (!drag) scrollLeft = grid.scrollLeft;
 }, { passive: true });
+
+daycol.addEventListener('click', (event) => {
+  if (!event.target.closest('.dlabel, [data-today]')) return;
+  if (weekOffset === 0) return;
+  weekOffset = 0;
+  render();
+});
 
 // Releasing a drag is followed by a click on a column this render has already
 // replaced, and that click must not also open a sheet. A time window rather
