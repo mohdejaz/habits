@@ -435,14 +435,20 @@ body {
   height: 58px;
   border: 0;
   border-radius: 50%;
-  background: var(--accent);
+  /* Translucent, because it floats over the trend bars and the last weeks are
+     the ones worth seeing. The alpha is on the background rather than on the
+     element: `opacity` would fade the glyph too and read as disabled. */
+  background: color-mix(in srgb, var(--accent) 68%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   color: #fff;
   font-size: 32px;
   line-height: 1;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .3);
   cursor: pointer;
 }
-.fab:active { transform: scale(.94); }
+/* Solid on press, so a tap still feels like it landed on something. */
+.fab:active { background: var(--accent); transform: scale(.94); }
 
 /* ---------- empty state ---------- */
 
