@@ -23,7 +23,8 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox'],
 });
 const page = await browser.newPage();
-await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+// Wide enough for the grid layout; the portrait list gets its own section.
+await page.setViewport({ width: 844, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -77,23 +78,7 @@ const todayIndex = () => page.evaluate(async () => {
   return store.dayIndexOf(Date.now(), store.weekDays(store.weekRange(0)));
 });
 
-// Scrolls one day into the region the frozen pane leaves over. A plain
-// scrollIntoView centres the cell in the whole grid, which on a phone puts it
-// *under* the pane — the click then lands on the name and opens the wrong
-// sheet. This is the same sum scrollToDay() does in the app.
-const showCell = (tab, row, day) => tab.evaluate((r, d) => {
-  const grid = document.querySelector('#grid');
-  const rowEl = document.querySelectorAll('.hrow')[r - 1];
-  const cell = rowEl.querySelectorAll('[data-cell]')[d];
-  const head = rowEl.querySelector('.hrow-head').getBoundingClientRect();
-  const box = cell.getBoundingClientRect();
-  const view = grid.clientWidth - head.width;
-  grid.scrollLeft += (box.left - grid.getBoundingClientRect().left) - head.width
-    - (view - box.width) / 2;
-}, row, day);
-
 const openCell = async (row, day) => {
-  await showCell(page, row, day);
   await page.click(`.hrow:nth-child(${row}) .cell[data-day="${day}"]`);
   await page.waitForSelector('#day-dialog[open]');
 };
@@ -142,83 +127,109 @@ const today = await todayIndex();
 check('today\'s column is marked', await page.evaluate((i) =>
   document.querySelectorAll('.dlabel')[i].classList.contains('today'), today));
 
-// The point of the layout: the name and the balance stay put while the days
-// scroll past. The head is sticky inside its own row rather than living in a
-// separate pane, which is what keeps a habit one draggable element.
-check('the name and balance are frozen and the days scroll', await page.evaluate(() => {
-  const grid = document.querySelector('#grid');
+// The point of the layout: the name and the balance hold the left while the
+// days sit beside them, and a habit is one element so a row drags as a unit.
+check('the name and balance lead every row', await page.evaluate(() => {
   const head = document.querySelector('.hrow-head');
-  const corner = document.querySelector('.dayhead-corner');
-  return getComputedStyle(head).position === 'sticky'
-    && getComputedStyle(corner).position === 'sticky'
-    && head.closest('.hrow') !== null
-    && getComputedStyle(grid).overflowX === 'auto';
-}));
-// Declaring `position: sticky` is not the same as sticking: an ancestor
-// narrower than the row leaves the head resolving against the wrong box, and
-// the pane slides away with the days. Scroll it and measure.
-check('every frozen pane holds its place while the days scroll', await page.evaluate(async () => {
   const grid = document.querySelector('#grid');
-  const was = grid.scrollLeft;
-  grid.scrollLeft = grid.scrollWidth;
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-  const edge = grid.getBoundingClientRect().left;
-  const heads = [...document.querySelectorAll('.hrow-head'), document.querySelector('.dayhead-corner')];
-  const stuck = grid.scrollLeft > 0 && heads.every((h) =>
-    Math.abs(h.getBoundingClientRect().left - edge) < 1);
-  grid.scrollLeft = was;
-  return stuck;
-}));
-// Rows must all end together, or the shortest one runs out of containing block
-// and its head comes unstuck before the others do.
-check('every row is the same width as the scroller', await page.evaluate(() => {
-  const grid = document.querySelector('#grid');
-  const rows = [...document.querySelectorAll('.hrow'), document.querySelector('.dayhead')];
-  return rows.every((r) => Math.abs(r.getBoundingClientRect().width - grid.scrollWidth) < 1);
+  return head.closest('.hrow') !== null
+    && Math.abs(head.getBoundingClientRect().left - grid.getBoundingClientRect().left) < 1;
 }));
 
-// The frozen pane is wide enough that portrait only shows a couple of days.
-// That is the trade: rotating the phone is what buys the whole week, and the
-// cells grow to fill it rather than leaving a gap at the right.
 const daysInView = () => page.evaluate(() => {
   const grid = document.querySelector('#grid');
   const right = grid.getBoundingClientRect().right;
   const head = document.querySelector('.hrow-head').getBoundingClientRect();
   return [...document.querySelectorAll('.hrow:nth-child(1) [data-cell]')].filter((c) => {
     const b = c.getBoundingClientRect();
-    return b.left >= head.right - 1 && b.right <= right + 1;
+    return getComputedStyle(c).display !== 'none'
+      && b.left >= head.right - 1 && b.right <= right + 1;
   }).length;
 });
-check('portrait shows at least one whole day beside the pane', (await daysInView()) >= 1,
-  String(await daysInView()));
 
-await page.setViewport({ width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
-await new Promise((r) => setTimeout(r, 250));
-check('landscape shows the whole week', (await daysInView()) === 7, String(await daysInView()));
-check('landscape needs no sideways scrolling at all', await page.evaluate(() => {
-  const grid = document.querySelector('#grid');
-  return grid.scrollWidth <= grid.clientWidth + 1;
-}));
-check('landscape cells grow to fill the width rather than leaving a gap',
-  await page.evaluate(() => {
-    const cell = document.querySelector('[data-cell]').getBoundingClientRect().width;
-    const declared = parseFloat(getComputedStyle(document.querySelector('#grid')).getPropertyValue('--cellw'));
-    return cell > declared + 1;
+// Wherever the grid shows at all it shows the whole week. The narrow-landscape
+// block tightens the pane and the cells precisely so this stays true down to a
+// 667px phone on its side; if it ever stops being true the grid starts
+// scrolling sideways, which is the thing the two layouts exist to avoid.
+for (const width of [660, 667, 780, 844, 1024]) {
+  await page.setViewport({ width, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await new Promise((r) => setTimeout(r, 200));
+  check(`the whole week fits at ${width}px`, (await daysInView()) === 7, String(await daysInView()));
+  check(`no sideways scrolling at ${width}px`, await page.evaluate(() => {
+    const grid = document.querySelector('#grid');
+    return grid.scrollWidth <= grid.clientWidth + 1;
   }));
-check('nothing in the frozen pane clips in either orientation', await page.evaluate(() =>
-  [...document.querySelectorAll('.hrow-name, .hrow-left')].every((e) => e.scrollWidth <= e.clientWidth)));
+  check(`nothing in the pane clips at ${width}px`, await page.evaluate(() =>
+    [...document.querySelectorAll('.hrow-name, .hrow-left')]
+      .filter((e) => getComputedStyle(e).display !== 'none')
+      .every((e) => e.scrollWidth <= e.clientWidth)));
+}
+await page.setViewport({ width: 844, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+await new Promise((r) => setTimeout(r, 200));
+check('cells grow to fill the width rather than leaving a gap', await page.evaluate(() => {
+  const cell = document.querySelector('[data-cell]').getBoundingClientRect().width;
+  const declared = parseFloat(getComputedStyle(document.querySelector('#grid')).getPropertyValue('--cellw'));
+  return cell > declared + 1;
+}));
+
+/* ---------- the portrait list ---------- */
+
+// Narrow enough and there is no room for a pane and seven days, so the days go
+// and the summary stays — plus today, because logging today must not need the
+// phone turned sideways.
 await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 await new Promise((r) => setTimeout(r, 250));
-// Three and a half days is the whole budget, so today has to be one of them.
-check('the day strip opens on today', await page.evaluate((i) => {
+
+const portrait = () => page.evaluate(() => {
+  const shown = (e) => e !== null && getComputedStyle(e).display !== 'none';
+  const row = document.querySelector('.hrow');
   const grid = document.querySelector('#grid');
-  const cell = document.querySelectorAll('.hrow:nth-child(1) [data-cell]')[i];
-  const head = document.querySelector('.hrow-head').getBoundingClientRect();
-  const box = cell.getBoundingClientRect();
-  const view = grid.getBoundingClientRect();
-  // Visible means clear of the frozen pane, which overlays the left of it.
-  return box.left >= head.right - 1 && box.right <= view.right + 1;
-}, today), 'today is off-screen in the day strip');
+  return {
+    dayhead: shown(document.querySelector('.dayhead')),
+    cells: [...row.querySelectorAll('[data-cell]')].filter(shown).length,
+    today: shown(row.querySelector('.cell.today')),
+    used: row.querySelector('[data-used]').textContent,
+    usedShown: shown(row.querySelector('[data-used]')),
+    scrolls: grid.scrollWidth > grid.clientWidth + 1,
+    clipped: [...document.querySelectorAll('.hrow-name, .hrow-left, .hrow-used')]
+      .filter((e) => shown(e) && e.scrollWidth > e.clientWidth).map((e) => e.textContent),
+  };
+});
+const p0 = await portrait();
+check('portrait drops the day header', !p0.dayhead);
+check('portrait keeps exactly one day, and it is today', p0.cells === 1 && p0.today,
+  `${p0.cells} cells, today=${p0.today}`);
+check('portrait spells the budget out', p0.usedShown && / of /.test(p0.used), p0.used);
+check('portrait never scrolls sideways', !p0.scrolls);
+check('nothing in a portrait row clips', p0.clipped.length === 0, JSON.stringify(p0.clipped));
+
+// Both gestures survive the layout change: the name is still the habit, the
+// cell is still the log.
+await page.click('.hrow:nth-child(1) .cell.today');
+await page.waitForSelector('#day-dialog[open]');
+check('portrait logs today from the row', true);
+await closeSheet();
+await page.click('.hrow:nth-child(1) .hrow-head');
+await page.waitForSelector('#detail-dialog[open]');
+check('portrait still opens the habit from the name', true);
+await closeSheet('#detail-dialog');
+
+// An earlier week has no today, so it has no cell to offer either.
+await page.click('#week-prev');
+await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'Last week');
+check('an earlier week in portrait is the summary and nothing else',
+  (await portrait()).cells === 0, String((await portrait()).cells));
+await page.click('#week-next');
+await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
+
+await page.screenshot({ path: `${SP}/shot-portrait.png` });
+await page.setViewport({ width: 844, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+await new Promise((r) => setTimeout(r, 250));
+
+check('days that have not happened are inert', await page.evaluate((i) => {
+  const cells = [...document.querySelectorAll('.hrow:nth-child(1) [data-cell]')];
+  return cells.every((c, n) => c.hasAttribute('disabled') === (n > i));
+}, today));
 check('days that have not happened are inert', await page.evaluate((i) => {
   const cells = [...document.querySelectorAll('.hrow:nth-child(1) [data-cell]')];
   return cells.every((c, n) => c.hasAttribute('disabled') === (n > i));
@@ -519,7 +530,6 @@ check('dragging up reorders', (await rowNames()).join(',') === 'Takeaway,Coffee,
 
 // A hold on a cell is a tap on that cell, not a drag of its column.
 {
-  await showCell(page, 1, 0);
   const cell = await page.$eval('.hrow:nth-child(1) .cell[data-day="0"]', (e) => {
     const r = e.getBoundingClientRect();
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
@@ -600,7 +610,7 @@ check('deletes a habit', (await rowNames()).join(',') === 'Takeaway,Reading', JS
 await page.evaluate(() => new Promise((r) => setTimeout(r, 400)));
 await page.close();
 const page2 = await browser.newPage();
-await page2.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true });
+await page2.setViewport({ width: 844, height: 760, deviceScaleFactor: 2, isMobile: true });
 page2.on('pageerror', (e) => errors.push('pageerror(2): ' + e.message));
 page2.on('console', (m) => m.type() === 'error' && errors.push('console(2): ' + m.text()));
 page2.on('dialog', (d) => d.accept());
@@ -796,7 +806,6 @@ const medHead = () => page2.$eval(`.hrow:nth-child(${med})`, (e) => ({
 check('a target counts down to itself', (await medHead()).left === '5 days to go', JSON.stringify(await medHead()));
 
 const tick = async (row, day) => {
-  await showCell(page2, row, day);
   await page2.click(`.hrow:nth-child(${row}) .cell[data-day="${day}"]`);
   await new Promise((r) => setTimeout(r, 90));
 };

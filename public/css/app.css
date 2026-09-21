@@ -94,6 +94,7 @@ body {
   --balw: 106px;    /* holds "14 cups left" and "1h 12m over" whole at 13px */
   --cellw: 60px;    /* what "$12.50" and "1h 30m" need at 13px, see .cell */
   --rowh: 52px;
+  --cellh: 52px;    /* the row height here; the portrait list makes it shorter */
   --headh: 36px;
   --cellgap: 5px;
 
@@ -244,6 +245,10 @@ body {
 
 /* The balance is the headline, not a subtitle — it is what the week comes down
    to, and reading it down a list is the whole point of the layout. */
+/* The budget is only spelled out where there is room for it: wide enough for
+   the whole week, the cells already say where it went. */
+.hrow-used { display: none; }
+
 .hrow-bal {
   flex: 0 0 var(--balw);
   min-width: 0;
@@ -286,11 +291,10 @@ body {
 
 .cell {
   position: relative;
-  /* Grows to share whatever is left over, which is how a rotated phone shows
-     the whole week filling the width instead of seven cells and a gap. In
-     portrait there is nothing spare and every cell stays --cellw. */
+  /* Grows to share whatever is left over, which is how a wide screen shows the
+     whole week filling the width instead of seven cells and a gap. */
   flex: 1 0 var(--cellw);
-  height: var(--rowh);
+  height: var(--cellh);
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -348,6 +352,78 @@ body {
 }
 @keyframes pulse { 50% { opacity: .25; } }
 
+/* ---------- narrow: the portrait list ---------- */
+/* Under 720px there is no room for a frozen pane and seven days, and the days
+   are the half worth dropping: the balance is what you came to read. The row
+   becomes name, what is used of the budget, the balance and a bar — plus today,
+   because logging today is the one thing you must still be able to do without
+   turning the phone. Nothing scrolls sideways here at all.
+
+   660px is the narrowest landscape phone worth supporting (an SE is 667), and
+   the block below tightens the pane and the cells between 660 and 780 so the
+   week still fits there whole. Above 780 the roomy sizes fit on their own. The
+   effect is that wherever the grid shows, all seven days show with it — it
+   never scrolls sideways, and a tablet in portrait gets the grid too. */
+@media (max-width: 659px) {
+  .grid {
+    --cellh: 44px;
+    overflow-x: hidden;
+  }
+
+  /* A list, so the rows meet at a rule rather than floating apart. */
+  .habits { width: auto; gap: 0; }
+  .hrow {
+    width: auto;
+    min-width: 100%;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px 8px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .hrow:last-child { border-bottom: 0; }
+
+  /* The days have no header to sit under. */
+  .dayhead { display: none; }
+
+  /* Nothing scrolls, so nothing has to stick. The head takes the width the
+     seven cells used to. */
+  .hrow-head {
+    position: static;
+    flex: 1 1 auto;
+    height: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 10px;
+    row-gap: 3px;
+  }
+  /* `contents` lets the balance and the bar be placed by the head's grid
+     rather than stacked inside their own box. */
+  .hrow-bal { display: contents; }
+  .hrow-name { grid-column: 1 / -1; font-size: 15px; }
+  .hrow-used {
+    display: block;
+    grid-column: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .hrow-left { grid-column: 2; text-align: right; font-size: 13px; }
+  .hrow-bar { grid-column: 1 / -1; margin-top: 1px; }
+
+  /* Only today is worth a cell when there is room for one. An earlier week has
+     no today, and then the row is the summary and nothing else. */
+  .cell { display: none; }
+  .cell.today {
+    display: grid;
+    flex: 0 0 var(--cellw);
+    border-color: var(--habit-color, var(--accent));
+  }
+}
+
 /* ---------- compact ---------- */
 /* Same grid, tightened: nothing is dropped, so more days fit beside the
    frozen pane before anything has to be scrolled to. */
@@ -357,8 +433,29 @@ body {
   --balw: 92px;
   --cellw: 52px;
   --rowh: 44px;
+  --cellh: 44px;
   --headh: 32px;
   --cellgap: 4px;
+}
+@media (max-width: 659px) {
+  .grid.compact { --cellh: 38px; }
+  .grid.compact .hrow { padding-top: 5px; padding-bottom: 5px; }
+}
+
+/* ---------- narrow landscape ---------- */
+/* Between a small phone on its side and a roomy one, the comfortable sizes do
+   not leave room for seven days (252 + 7x65 + 12 = 714). Tightening the pane
+   and the cells keeps the whole week on screen rather than starting to scroll:
+   620px of content inside 660px of phone. */
+@media (min-width: 660px) and (max-width: 779px) {
+  .grid {
+    --headw: 220px;
+    --balw: 92px;
+    --cellw: 52px;
+  }
+  .grid .hrow-name { font-size: 13px; }
+  .grid .hrow-left { font-size: 12px; }
+  .grid .cell { font-size: 12px; }
 }
 .grid.compact .dlabel .dow { font-size: 11px; }
 .grid.compact .dlabel .dom { font-size: 10px; }

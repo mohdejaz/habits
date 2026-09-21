@@ -3,9 +3,10 @@
 A phone-first PWA for keeping habits inside a **weekly budget** — an amount of
 time, a number of things, an amount of money, or simply whether you did it.
 
-The week is a grid: the habits down the side, the days across. Each habit is a
-row, and its name and its balance are frozen at the left of it — they are what
-you came to read, so they hold still while the days scroll under them. Tap any
+There are two layouts and the screen picks between them. Hold the phone upright
+and you get a **list**: one row per habit, its name, what it has used of its
+budget, the balance, a bar, and a single cell for today. Turn the phone sideways
+and you get the **grid**: the same rows, with all seven days beside them. Tap any
 cell to log an amount for that habit on that day, so recording Tuesday's coffees
 on Thursday is the same gesture as recording today's.
 
@@ -64,18 +65,20 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   number leads and the word trails, so if a name or a balance ever does outrun
   its column the tail is what goes — and "left" or "over" is the half the colour
   has already said.
-- **The pane is 252px, which leaves room for two days in portrait.** That is the
-  trade, and it is the right way round: the balance is what you came to read and
-  the days are the detail. **Rotating the phone buys the whole week** — at 844px
-  all seven fit with no scrolling at all, and the cells grow to fill the width
-  rather than leaving a gap at the right. Rotating back recentres the strip,
-  because a grid left where the wider layout put it comes back showing Monday.
-  The resize is keyed on width rather than height, so a soft keyboard opening
-  over a sheet does not move the grid.
-- **The strip opens centred on today** and stays where you leave it while you are
-  on a week. Moving to another week — with `‹` `›`, or the way back from a date —
-  recentres it, because arriving somewhere new should not land you
-  on Monday when it is Friday. Where the days are scrolled to is read off the
+- **Under 660px the days go and the summary stays.** There is no room for a
+  252px pane and seven days on an upright phone, and the days are the half worth
+  dropping — except today's, which stays, because logging today must not require
+  turning the phone. An earlier week has no today, so in the list it is the
+  summary and nothing else; the days are one rotation away.
+- **Wherever the grid shows, it shows the whole week.** 660px is the narrowest
+  landscape phone worth supporting (an SE on its side is 667), and between 660
+  and 780 the pane and the cells tighten so all seven days still fit. Above that
+  the comfortable sizes fit on their own, and the cells grow to fill the width
+  rather than leaving a gap at the right. **The grid therefore never scrolls
+  sideways** — which is why there is no scroll-to-today machinery in `app.js`,
+  and why the test suite asserts the fit at five widths rather than trusting it.
+  The `overflow-x: auto` and the sticky pane stay as a cheap safety net if those
+  numbers ever stop adding up. Where the days are scrolled to is read off the
   element at the top of every render rather than cached from the last scroll
   event, or a tap could snap the strip back to where it was two frames ago.
 - **Tapping a cell** opens the day sheet: the habit and the date are already
@@ -116,7 +119,7 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   before any of the numbers do. Because the days scroll rather than being
   squeezed onto one screen, a cell is wide enough for the real formatting —
   `$12.50` and `1h 30m`, not an abbreviation of them. Sixty pixels is still
-  sixty pixels in portrait, though, so the few values that cannot fit even there are
+  sixty pixels, though, so the few values that cannot fit even there are
   shortened in `formatCell()` rather than clipped: `$123.45` becomes `$123`,
   `12h 30m` becomes `12h30`. Half a number reads as a different number, which a
   clipped word never does — and the exact amount is in the balance column and
@@ -158,7 +161,7 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   `habits.archived`, and it is the honest alternative to deleting a habit you have
   stopped tracking but do not want to erase.
 - **Compact** (Settings → Cards) shortens the rows and narrows the frozen pane
-  without dropping a day, so more habits fit and portrait buys back a third day.
+  without dropping a day, so more habits fit on screen at once.
 
 ## Your data
 
@@ -225,11 +228,11 @@ npm start          # in one terminal
 node tools/e2e.mjs # drives real Chrome: budgets for all three kinds, logging
                    # into any day of the week (including an earlier one), daily
                    # limits colouring the day and not the week, the name and
-                   # balance staying frozen while the days scroll *and staying
-                   # put when they do*, the strip opening on today, rotating to
-                   # a whole week that needs no scrolling, that a cell never has
-                   # to clip its own value, timer persistence, vertical
-                   # drag-to-reorder by the
+                   # balance leading every row, the whole week fitting without
+                   # sideways scrolling at five widths from 660 to 1024, the
+                   # portrait list keeping only today and still logging into it,
+                   # that a cell never has to clip its own value, timer
+                   # persistence, vertical drag-to-reorder by the
                    # frozen pane, that holding a cell never drags its row,
                    # yes/no habits in both directions and that a day never
                    # holds two ticks, compact rows, offline load,

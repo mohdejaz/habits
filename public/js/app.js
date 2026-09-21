@@ -28,8 +28,6 @@ let days = [];           // the seven columns of the week on screen
 let todayIndex = -1;     // which column is today, or -1 on an earlier week
 let daySheet = null;     // { habitId, dayIndex } while the day sheet is open
 let draggedAt = 0;       // when a reorder last finished, to swallow its trailing click
-let scrollLeft = 0;      // how far the days are scrolled, kept across renders
-let recentre = true;     // next render should put today back in view
 
 /* ---------- formatting ---------- */
 
@@ -205,12 +203,6 @@ function render() {
   // that are on their way out. Drop it rather than move detached elements.
   if (drag) cleanupDrag();
 
-  // Where the days are scrolled to, read now rather than remembered from the
-  // last scroll event: replacing the rows clamps it to zero, and a scroll the
-  // page made programmatically may not have fired its event yet. A hidden grid
-  // has no scroll worth reading.
-  if (!grid.hidden) scrollLeft = grid.scrollLeft;
-
   const range = store.weekRange(weekOffset);
   const habits = store.listHabits();
   const usage = store.usageByDay(range);
@@ -236,40 +228,7 @@ function render() {
 
   renderDayHead();
   list.replaceChildren(...habits.map((h) => row(h, usage.get(h.id) || new Array(7).fill(0))));
-  // Only about three and a half days fit, so landing on Monday when today is
-  // Friday would hide the one day you are most likely to want. Recentring is
-  // for arriving somewhere new — boot, or a different week; inside a week the
-  // scroll is left where the user put it.
-  // A hidden grid has no width to measure against, so the first render of an
-  // empty app must not spend the recentre and leave the real one unscrolled.
-  if (recentre && !grid.hidden) {
-    recentre = false;
-    scrollToDay(todayIndex < 0 ? 0 : todayIndex);
-  } else {
-    grid.scrollLeft = scrollLeft;
-  }
   tick();
-}
-
-// Puts one day in the middle of whatever is visible beside the frozen pane.
-// The pane overlays the left of the scroller, so the room the days actually
-// get is that much narrower than the grid. Measured off the elements rather
-// than computed from --cellw, because a cell grows to fill the spare width on
-// a rotated phone and is then wider than the variable says.
-function scrollToDay(index) {
-  const row = list.firstElementChild;
-  const cell = row && row.querySelectorAll('[data-cell]')[index];
-  const head = row && row.querySelector('.hrow-head');
-  if (!cell || !head) return;
-
-  const box = cell.getBoundingClientRect();
-  const headw = head.getBoundingClientRect().width;
-  const view = grid.clientWidth - headw;
-  // Where the cell sits now, against where it should sit. Browsers clamp the
-  // result, so a week that already fits stays at zero.
-  const at = box.left - grid.getBoundingClientRect().left;
-  grid.scrollLeft += at - headw - (view - box.width) / 2;
-  scrollLeft = grid.scrollLeft;
 }
 
 // The header row: a corner that clears the frozen pane, then a label per day.
@@ -319,6 +278,7 @@ function row(habit, daily) {
   el.innerHTML = `
     <button type="button" class="hrow-head" data-head>
       <span class="hrow-name">${escapeHtml(habit.name)}</span>
+      <span class="hrow-used" data-used></span>
       <span class="hrow-bal">
         <span class="hrow-left" data-left></span>
         <span class="hrow-bar"><i data-bar></i></span>
@@ -349,6 +309,10 @@ function tick() {
     el.classList.toggle('met', how.met);
 
     $('[data-left]', el).textContent = how.text;
+    // Only the portrait list shows this, but it costs a string either way and
+    // keeping it out of the layout is the stylesheet's job, not this loop's.
+    $('[data-used]', el).textContent =
+      `${formatBare(habit, used)} of ${formatBudget(habit)}`;
     const pct = habit.weekly_budget > 0 ? Math.min(100, (used / habit.weekly_budget) * 100) : 0;
     $('[data-bar]', el).style.width = `${pct}%`;
 
@@ -388,28 +352,10 @@ function escapeHtml(s) {
 
 /* ---------- grid interactions ---------- */
 
-// Rotating the phone changes how many days fit beside the frozen pane, and a
-// strip left where the wider layout put it can come back showing none of the
-// days worth seeing. Width is the test, not height: a soft keyboard opening
-// over a sheet fires resize too, and that must not move the grid.
-let lastWidth = window.innerWidth;
-let resizeTimer = 0;
-window.addEventListener('resize', () => {
-  if (window.innerWidth === lastWidth) return;
-  lastWidth = window.innerWidth;
-  clearTimeout(resizeTimer);
-  // Debounced, or the rotation animation re-renders on every intermediate size.
-  resizeTimer = setTimeout(() => {
-    recentre = true;
-    render();
-  }, 150);
-});
-
 dayhead.addEventListener('click', (event) => {
   if (!event.target.closest('.dlabel, [data-today]')) return;
   if (weekOffset === 0) return;
   weekOffset = 0;
-  recentre = true;
   render();
 });
 
@@ -658,11 +604,8 @@ function cleanupDrag() {
 
 /* ---------- week navigation ---------- */
 
-// Arriving at a different week is arriving somewhere new, so the day strip
-// starts where it is worth starting rather than wherever the last week was
-// left scrolled to.
-$('#week-prev').addEventListener('click', () => { weekOffset -= 1; recentre = true; render(); });
-$('#week-next').addEventListener('click', () => { if (weekOffset < 0) { weekOffset += 1; recentre = true; render(); } });
+$('#week-prev').addEventListener('click', () => { weekOffset -= 1; render(); });
+$('#week-next').addEventListener('click', () => { if (weekOffset < 0) { weekOffset += 1; render(); } });
 
 /* ---------- habit editor ---------- */
 
