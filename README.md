@@ -65,20 +65,15 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   number leads and the word trails, so if a name or a balance ever does outrun
   its column the tail is what goes — and "left" or "over" is the half the colour
   has already said.
-- **Under 660px the days go and the summary stays.** There is no room for a
-  252px pane and seven days on an upright phone, and the days are the half worth
-  dropping — except today's, which stays, because logging today must not require
-  turning the phone. An earlier week has no today, so in the list it is the
-  summary and nothing else; the days are one rotation away.
-- **Wherever the grid shows, it shows the whole week.** 660px is the narrowest
-  landscape phone worth supporting (an SE on its side is 667), and between 660
-  and 780 the pane and the cells tighten so all seven days still fit. Above that
-  the comfortable sizes fit on their own, and the cells grow to fill the width
-  rather than leaving a gap at the right. **The grid therefore never scrolls
-  sideways** — which is why there is no scroll-to-today machinery in `app.js`,
-  and why the test suite asserts the fit at five widths rather than trusting it.
-  The `overflow-x: auto` and the sticky pane stay as a cheap safety net if those
-  numbers ever stop adding up. Where the days are scrolled to is read off the
+- **Too narrow for a pane and seven days and the days go, and the summary
+  stays** — except today's cell, which stays too, because logging today must not
+  require turning the phone. An earlier week has no today, so in the list it is
+  the summary and nothing else; the days are one rotation away.
+- **Wherever the grid shows, it shows the whole week.** The cells grow to fill
+  whatever is left rather than leaving a gap at the right, so **the grid never
+  scrolls sideways** — which is why there is no scroll-to-today machinery in
+  `app.js`. The `overflow-x: auto` and the sticky pane stay as a cheap safety
+  net if the numbers ever stop adding up. Where the days are scrolled to is read off the
   element at the top of every render rather than cached from the last scroll
   event, or a tap could snap the strip back to where it was two frames ago.
 - **Tapping a cell** opens the day sheet: the habit and the date are already
@@ -160,8 +155,22 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   logged on the way out, so nothing keeps ticking where you cannot see it. This is
   `habits.archived`, and it is the honest alternative to deleting a habit you have
   stopped tracking but do not want to erase.
-- **Compact** (Settings → Cards) shortens the rows and narrows the frozen pane
-  without dropping a day, so more habits fit on screen at once.
+- **Text size** (Settings) is small, medium or large, and each step sets the
+  type *and* the boxes that have to hold it. Scaling the type alone would push
+  values out of cells that had not grown to take them, and a clipped number
+  reads as a different number.
+
+  A bigger step therefore needs a wider screen before the whole week will fit,
+  and that threshold is the setting's real consequence: **600px for small,
+  720px for medium, 810px for large.** Below it you get the list. So an iPhone
+  SE on its side shows the week at small and the list at medium; a regular phone
+  shows it at every size. Each size declares its own threshold in `--fits`, and
+  `applyLayout()` reads that to choose the layout — a media query cannot read a
+  custom property, and this is the one layout decision the stylesheet cannot
+  make on its own. The three numbers must stay in step with the boxes:
+  `--headw + 7×--cellw + 6×--cellgap + 12` is the content width, and `--fits` is
+  the next round number above it. The suite checks all three at the threshold,
+  above it, and one pixel below.
 
 ## Your data
 
@@ -178,7 +187,7 @@ Schema (`public/js/db.js`):
 | `habits` | name, `kind` (`time`\|`count`\|`money`\|`bool`), `weekly_budget`, `daily_limit` (nullable), `at_least` (0 = a cap, 1 = a target), unit label, colour, `sort_order`, `archived` |
 | `entries` | one row per logged session or tap: `amount`, `started_at`, `ended_at` |
 | `timers` | at most one row per habit — a timer that is currently running |
-| `meta` | settings: week start day, currency, compact cards |
+| `meta` | settings: week start day, currency, text size |
 
 `weekly_budget`, `daily_limit` and `amount` share one unit per kind — minutes, whole units, or major
 currency units (`12.5` is £12.50) — so a budget can be compared to a sum directly.
@@ -230,12 +239,14 @@ node tools/e2e.mjs # drives real Chrome: budgets for all three kinds, logging
                    # limits colouring the day and not the week, the name and
                    # balance leading every row, the whole week fitting without
                    # sideways scrolling at five widths from 660 to 1024, the
-                   # portrait list keeping only today and still logging into it,
-                   # that a cell never has to clip its own value, timer
-                   # persistence, vertical drag-to-reorder by the
+                   # list keeping only today and still logging into it, all
+                   # three text sizes fitting a week at their own threshold and
+                   # falling to the list a pixel below it, that a cell never has
+                   # to clip its own value, timer persistence,
+                   # vertical drag-to-reorder by the
                    # frozen pane, that holding a cell never drags its row,
                    # yes/no habits in both directions and that a day never
-                   # holds two ticks, compact rows, offline load,
+                   # holds two ticks, offline load,
                    # export/import round-trip, and upgrading a database written
                    # before money existed
 ```

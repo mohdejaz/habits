@@ -176,12 +176,17 @@
     </select>
   </label>
 
+  <!-- The size sets the type and the boxes that hold it together, so a bigger
+       step needs a wider screen before the whole week will fit beside the
+       names. Below that width the days give way to the list. -->
   <fieldset class="field">
-    <span>Cards</span>
-    <div class="segmented" id="density">
-      <label><input type="radio" name="density" value="comfortable" checked><span>Comfortable</span></label>
-      <label><input type="radio" name="density" value="compact"><span>Compact</span></label>
+    <span>Text size</span>
+    <div class="segmented" id="text-size">
+      <label><input type="radio" name="text_size" value="s"><span>Small</span></label>
+      <label><input type="radio" name="text_size" value="m" checked><span>Medium</span></label>
+      <label><input type="radio" name="text_size" value="l"><span>Large</span></label>
     </div>
+    <p class="hint">Larger text needs a wider screen to show a whole week — turn the phone sideways, or pick a smaller size.</p>
   </fieldset>
 
   <label class="field">

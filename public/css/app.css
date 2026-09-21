@@ -90,13 +90,8 @@ body {
    the heights are fixed here rather than left to the content — the day header
    and the rows are separate elements and have no other way to agree. */
 .grid {
-  --headw: 252px;   /* the frozen pane: 12 pad + name + 8 gap + balance + 8 pad */
-  --balw: 106px;    /* holds "14 cups left" and "1h 12m over" whole at 13px */
-  --cellw: 60px;    /* what "$12.50" and "1h 30m" need at 13px, see .cell */
-  --rowh: 52px;
-  --cellh: 52px;    /* the row height here; the portrait list makes it shorter */
-  --headh: 36px;
-  --cellgap: 5px;
+  /* Every one of these comes from the text size — see `.grid.size-*` below.
+     The pane is 12 pad + name + 8 gap + balance + 8 pad. */
 
   overflow-x: auto;
   overscroll-behavior-x: contain;
@@ -178,8 +173,8 @@ body {
 /* Only worth pressing when there is somewhere to go back to. */
 .dayhead.away .dlabel { cursor: pointer; }
 .dayhead.away .dlabel:active { opacity: .6; }
-.dlabel .dow { font-size: 12px; font-weight: 650; line-height: 1.25; }
-.dlabel .dom { font-size: 11px; color: var(--muted); line-height: 1.25; }
+.dlabel .dow { font-weight: 650; line-height: 1.25; }
+.dlabel .dom { color: var(--muted); line-height: 1.25; }
 .dlabel.today .dow,
 .dlabel.today .dom { color: var(--accent); }
 .dlabel.future { opacity: .45; }
@@ -238,7 +233,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
   font-weight: 650;
   letter-spacing: -0.01em;
 }
@@ -262,7 +256,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
   font-weight: 600;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -304,10 +297,9 @@ body {
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
-  /* 13px in 60px is what holds "$12.50" and "1h 30m" whole, which is the
-     whole reason the days scroll rather than sharing the width. Values too
-     long even for that are shortened in formatCell(), never clipped. */
-  font-size: 13px;
+  /* The size sets this; every step is chosen so "$12.50" and "1h 30m" fit the
+     cell whole. Values too long even then are shortened in formatCell(),
+     never clipped. */
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -352,116 +344,131 @@ body {
 }
 @keyframes pulse { 50% { opacity: .25; } }
 
-/* ---------- narrow: the portrait list ---------- */
-/* Under 720px there is no room for a frozen pane and seven days, and the days
-   are the half worth dropping: the balance is what you came to read. The row
-   becomes name, what is used of the budget, the balance and a bar — plus today,
-   because logging today is the one thing you must still be able to do without
-   turning the phone. Nothing scrolls sideways here at all.
+/* ---------- the list ---------- */
+/* Too narrow for a pane and seven days and the days go, because the balance is
+   the half you came to read. Today's cell stays: logging today must not need
+   the phone turned sideways. An earlier week has no today and is then the
+   summary and nothing else.
 
-   660px is the narrowest landscape phone worth supporting (an SE is 667), and
-   the block below tightens the pane and the cells between 660 and 780 so the
-   week still fits there whole. Above 780 the roomy sizes fit on their own. The
-   effect is that wherever the grid shows, all seven days show with it — it
-   never scrolls sideways, and a tablet in portrait gets the grid too. */
-@media (max-width: 659px) {
-  .grid {
-    --cellh: 44px;
-    overflow-x: hidden;
-  }
-
-  /* A list, so the rows meet at a rule rather than floating apart. */
-  .habits { width: auto; gap: 0; }
-  .hrow {
-    width: auto;
-    min-width: 100%;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px 8px 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .hrow:last-child { border-bottom: 0; }
-
-  /* The days have no header to sit under. */
-  .dayhead { display: none; }
-
-  /* Nothing scrolls, so nothing has to stick. The head takes the width the
-     seven cells used to. */
-  .hrow-head {
-    position: static;
-    flex: 1 1 auto;
-    height: auto;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    column-gap: 10px;
-    row-gap: 3px;
-  }
-  /* `contents` lets the balance and the bar be placed by the head's grid
-     rather than stacked inside their own box. */
-  .hrow-bal { display: contents; }
-  .hrow-name { grid-column: 1 / -1; font-size: 15px; }
-  .hrow-used {
-    display: block;
-    grid-column: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 12px;
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-  }
-  .hrow-left { grid-column: 2; text-align: right; font-size: 13px; }
-  .hrow-bar { grid-column: 1 / -1; margin-top: 1px; }
-
-  /* Only today is worth a cell when there is room for one. An earlier week has
-     no today, and then the row is the summary and nothing else. */
-  .cell { display: none; }
-  .cell.today {
-    display: grid;
-    flex: 0 0 var(--cellw);
-    border-color: var(--habit-color, var(--accent));
-  }
+   Which widths count as "too narrow" depends on the chosen text size, and a
+   media query cannot read a custom property — so applyLayout() in app.js does
+   the comparison and puts `.list` here. That is the one layout decision the
+   stylesheet cannot make on its own. */
+.grid.list {
+  --cellh: calc(var(--rowh) - 8px);
+  overflow-x: hidden;
 }
 
-/* ---------- compact ---------- */
-/* Same grid, tightened: nothing is dropped, so more days fit beside the
-   frozen pane before anything has to be scrolled to. */
+/* A list, so the rows meet at a rule rather than floating apart. */
+.grid.list .habits { width: auto; gap: 0; }
+.grid.list .hrow {
+  width: auto;
+  min-width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.grid.list .hrow:last-child { border-bottom: 0; }
 
-.grid.compact {
-  --headw: 220px;
-  --balw: 92px;
-  --cellw: 52px;
+/* The days have no header to sit under. */
+.grid.list .dayhead { display: none; }
+
+/* Nothing scrolls, so nothing has to stick. The head takes the width the seven
+   cells used to. */
+.grid.list .hrow-head {
+  position: static;
+  flex: 1 1 auto;
+  height: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 3px;
+}
+/* `contents` lets the balance and the bar be placed by the head's grid rather
+   than stacked inside their own box. */
+.grid.list .hrow-bal { display: contents; }
+.grid.list .hrow-name { grid-column: 1 / -1; }
+.grid.list .hrow-used {
+  display: block;
+  grid-column: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.grid.list .hrow-left { grid-column: 2; text-align: right; }
+.grid.list .hrow-bar { grid-column: 1 / -1; margin-top: 1px; }
+
+.grid.list .cell { display: none; }
+.grid.list .cell.today {
+  display: grid;
+  flex: 0 0 var(--cellw);
+  border-color: var(--habit-color, var(--accent));
+}
+
+/* ---------- text size ---------- */
+/* Three steps, each a complete set: the type, and the boxes that have to hold
+   it. Scaling the type alone would only push values out of cells that had not
+   grown to take them, and a clipped number reads as a different number.
+
+   Each step therefore needs a different amount of room for the whole week —
+   `--fits` records it, and applyLayout() reads it to decide between the grid
+   and the list. Keep the three in step: --headw + 7x--cellw + 6x--cellgap + 12
+   is the content width, and --fits is the next round number above it. */
+
+.grid.size-s {
+  --fits: 600px;    /* content 590: 204 + 7x50 + 6x4 + 12 */
+  --headw: 204px;
+  --balw: 86px;
+  --cellw: 50px;
   --rowh: 44px;
   --cellh: 44px;
-  --headh: 32px;
+  --headh: 30px;
   --cellgap: 4px;
 }
-@media (max-width: 659px) {
-  .grid.compact { --cellh: 38px; }
-  .grid.compact .hrow { padding-top: 5px; padding-bottom: 5px; }
-}
+.grid.size-s .hrow-name { font-size: 13px; }
+.grid.size-s .hrow-left { font-size: 11px; }
+.grid.size-s .hrow-used { font-size: 11px; }
+.grid.size-s .cell { font-size: 11px; border-radius: 10px; }
+.grid.size-s .dlabel .dow { font-size: 10px; }
+.grid.size-s .dlabel .dom { font-size: 10px; }
 
-/* ---------- narrow landscape ---------- */
-/* Between a small phone on its side and a roomy one, the comfortable sizes do
-   not leave room for seven days (252 + 7x65 + 12 = 714). Tightening the pane
-   and the cells keeps the whole week on screen rather than starting to scroll:
-   620px of content inside 660px of phone. */
-@media (min-width: 660px) and (max-width: 779px) {
-  .grid {
-    --headw: 220px;
-    --balw: 92px;
-    --cellw: 52px;
-  }
-  .grid .hrow-name { font-size: 13px; }
-  .grid .hrow-left { font-size: 12px; }
-  .grid .cell { font-size: 12px; }
+.grid.size-m {
+  --fits: 720px;    /* content 714: 252 + 7x60 + 6x5 + 12 */
+  --headw: 252px;
+  --balw: 106px;
+  --cellw: 60px;
+  --rowh: 52px;
+  --cellh: 52px;
+  --headh: 36px;
+  --cellgap: 5px;
 }
-.grid.compact .dlabel .dow { font-size: 11px; }
-.grid.compact .dlabel .dom { font-size: 10px; }
-.grid.compact .hrow-name { font-size: 13px; }
-.grid.compact .hrow-left { font-size: 11px; }
-.grid.compact .cell { font-size: 11px; border-radius: 10px; }
+.grid.size-m .hrow-name { font-size: 14px; }
+.grid.size-m .hrow-left { font-size: 13px; }
+.grid.size-m .hrow-used { font-size: 12px; }
+.grid.size-m .cell { font-size: 13px; }
+.grid.size-m .dlabel .dow { font-size: 12px; }
+.grid.size-m .dlabel .dom { font-size: 11px; }
+
+.grid.size-l {
+  --fits: 810px;    /* content 802: 284 + 7x68 + 6x5 + 12 */
+  --headw: 284px;
+  --balw: 118px;
+  --cellw: 68px;
+  --rowh: 62px;
+  --cellh: 62px;
+  --headh: 42px;
+  --cellgap: 5px;
+}
+.grid.size-l .hrow-name { font-size: 16px; }
+.grid.size-l .hrow-left { font-size: 15px; }
+.grid.size-l .hrow-used { font-size: 13px; }
+.grid.size-l .cell { font-size: 15px; border-radius: 14px; }
+.grid.size-l .dlabel .dow { font-size: 13px; }
+.grid.size-l .dlabel .dom { font-size: 12px; }
 
 /* ---------- buttons ---------- */
 

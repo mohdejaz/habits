@@ -224,12 +224,43 @@ function render() {
   emptyState.hidden = habits.length > 0;
   $('#fab').hidden = habits.length === 0;
   grid.hidden = habits.length === 0;
-  grid.classList.toggle('compact', store.getSetting('compact', '0') === '1');
+  applyLayout();
 
   renderDayHead();
   list.replaceChildren(...habits.map((h) => row(h, usage.get(h.id) || new Array(7).fill(0))));
   tick();
 }
+
+const TEXT_SIZES = ['s', 'm', 'l'];
+
+// Small, medium, large. Databases written before this setting existed carry
+// `compact` instead, and compact was the smaller of the two.
+function textSize() {
+  const stored = store.getSetting('text_size', null);
+  if (TEXT_SIZES.includes(stored)) return stored;
+  return store.getSetting('compact', '0') === '1' ? 's' : 'm';
+}
+
+// Chooses between the grid and the list. Bigger text needs a wider screen to
+// show a whole week, so the threshold belongs to the size rather than to the
+// stylesheet — `--fits` carries it, and a media query cannot read a custom
+// property. Everything else about both layouts is still pure CSS.
+function applyLayout() {
+  const size = textSize();
+  for (const name of TEXT_SIZES) grid.classList.toggle(`size-${name}`, name === size);
+  const fits = parseFloat(getComputedStyle(grid).getPropertyValue('--fits'));
+  grid.classList.toggle('list', !(window.innerWidth >= fits));
+}
+
+// The layout threshold is a width, so a rotation can cross it. Width rather
+// than height: a soft keyboard opening over a sheet resizes the page too, and
+// that must not change the layout underneath it.
+let lastWidth = window.innerWidth;
+window.addEventListener('resize', () => {
+  if (window.innerWidth === lastWidth) return;
+  lastWidth = window.innerWidth;
+  applyLayout();
+});
 
 // The header row: a corner that clears the frozen pane, then a label per day.
 function renderDayHead() {
@@ -996,8 +1027,8 @@ $('#hidden-list').addEventListener('click', (event) => {
   toast('Habit restored');
 });
 
-$('#density').addEventListener('change', (event) => {
-  store.setSetting('compact', event.target.value === 'compact' ? '1' : '0');
+$('#text-size').addEventListener('change', (event) => {
+  store.setSetting('text_size', event.target.value);
   render();
 });
 
@@ -1008,8 +1039,7 @@ $('#currency-select').addEventListener('change', (event) => {
 
 $('#open-settings').addEventListener('click', async () => {
   $('#week-start-select').value = String(store.weekStartDay());
-  const compact = store.getSetting('compact', '0') === '1';
-  $(`#density input[value="${compact ? 'compact' : 'comfortable'}"]`).checked = true;
+  $(`#text-size input[value="${textSize()}"]`).checked = true;
   buildCurrencyOptions();
   buildHiddenList();
   const note = $('#storage-note');

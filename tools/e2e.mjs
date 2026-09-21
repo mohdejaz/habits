@@ -147,23 +147,48 @@ const daysInView = () => page.evaluate(() => {
   }).length;
 });
 
-// Wherever the grid shows at all it shows the whole week. The narrow-landscape
-// block tightens the pane and the cells precisely so this stays true down to a
-// 667px phone on its side; if it ever stops being true the grid starts
-// scrolling sideways, which is the thing the two layouts exist to avoid.
-for (const width of [660, 667, 780, 844, 1024]) {
-  await page.setViewport({ width, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+// Wherever the grid shows at all it shows the whole week, at every text size.
+// Each size declares the width it needs in `--fits`; the contract is that at
+// that width the week is whole and nothing scrolls or clips, and one pixel
+// below it the list takes over instead. If a size's numbers ever stop adding
+// up, the grid starts scrolling sideways — which is the thing the two layouts
+// exist to avoid, and which nothing else would notice.
+const setSize = async (value) => {
+  await page.evaluate(async (v) => {
+    const store = await import('./js/store.js');
+    store.setSetting('text_size', v);
+  }, value);
+  await page.reload({ waitUntil: 'networkidle0' });
+  await page.waitForSelector('.hrow');
+};
+const fitsAt = () => page.$eval('#grid', (e) =>
+  parseFloat(getComputedStyle(e).getPropertyValue('--fits')));
+
+for (const size of ['s', 'm', 'l']) {
+  await setSize(size);
+  const fits = await fitsAt();
+
+  for (const width of [fits, fits + 120, 1024]) {
+    await page.setViewport({ width, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await new Promise((r) => setTimeout(r, 200));
+    check(`size ${size}: the whole week fits at ${width}px`, (await daysInView()) === 7,
+      String(await daysInView()));
+    check(`size ${size}: nothing scrolls sideways at ${width}px`, await page.evaluate(() => {
+      const grid = document.querySelector('#grid');
+      return grid.scrollWidth <= grid.clientWidth + 1;
+    }));
+    check(`size ${size}: nothing clips at ${width}px`, await page.evaluate(() =>
+      [...document.querySelectorAll('.hrow-name, .hrow-left, [data-cell]')]
+        .filter((e) => getComputedStyle(e).display !== 'none')
+        .every((e) => e.scrollWidth <= e.clientWidth)));
+  }
+
+  await page.setViewport({ width: fits - 1, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await new Promise((r) => setTimeout(r, 200));
-  check(`the whole week fits at ${width}px`, (await daysInView()) === 7, String(await daysInView()));
-  check(`no sideways scrolling at ${width}px`, await page.evaluate(() => {
-    const grid = document.querySelector('#grid');
-    return grid.scrollWidth <= grid.clientWidth + 1;
-  }));
-  check(`nothing in the pane clips at ${width}px`, await page.evaluate(() =>
-    [...document.querySelectorAll('.hrow-name, .hrow-left')]
-      .filter((e) => getComputedStyle(e).display !== 'none')
-      .every((e) => e.scrollWidth <= e.clientWidth)));
+  check(`size ${size}: one pixel narrower is the list`,
+    await page.$eval('#grid', (e) => e.classList.contains('list')));
 }
+await setSize('m');
 await page.setViewport({ width: 844, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 await new Promise((r) => setTimeout(r, 200));
 check('cells grow to fill the width rather than leaving a gap', await page.evaluate(() => {
@@ -563,40 +588,54 @@ check('the row handle reserves vertical gestures for the drag',
   (await page.$eval('.hrow-head', (e) => getComputedStyle(e).touchAction)) === 'pan-x',
   await page.$eval('.hrow-head', (e) => getComputedStyle(e).touchAction));
 
-/* ---------- compact ---------- */
+/* ---------- text size ---------- */
 
+const cellFont = () => page.$eval('[data-cell]', (e) => parseFloat(getComputedStyle(e).fontSize));
 const rowHeight = () => page.$eval('.hrow:nth-child(1)', (e) => Math.round(e.getBoundingClientRect().height));
 const paneWidth = () => page.$eval('.hrow-head', (e) => Math.round(e.getBoundingClientRect().width));
-const comfortable = await rowHeight();
-const comfortablePane = await paneWidth();
+
+const medium = { font: await cellFont(), row: await rowHeight(), pane: await paneWidth() };
+
+// Chosen from Settings, not poked into the store: the picker has to be wired
+// to the setting the layout actually reads.
 await page.click('#open-settings');
 await page.waitForSelector('#settings-dialog[open]');
-await page.click('#density input[value=compact]');
-await page.waitForFunction(() => document.querySelector('#grid').classList.contains('compact'));
+check('the picker opens on the size in force',
+  await page.$eval('#text-size input[value=m]', (e) => e.checked));
+await page.click('#text-size input[value=l]');
+await page.waitForFunction(() => document.querySelector('#grid').classList.contains('size-l'));
 await closeSheet('#settings-dialog');
-const compact = await rowHeight();
-check('compact shortens the row', compact < comfortable, `${comfortable}px -> ${compact}px`);
-check('compact keeps every day tappable', (await rowState(1)).cells.length === 7);
-check('the frozen pane shrinks with it', (await paneWidth()) < comfortablePane,
-  `${comfortablePane}px -> ${await paneWidth()}px`);
-check('compact buys back a day', (await daysInView()) > 2, String(await daysInView()));
-// A day column narrower than its own label spills sideways under the cells.
-check('compact still fits the longest day label', await page.evaluate(() =>
+
+const large = { font: await cellFont(), row: await rowHeight(), pane: await paneWidth() };
+check('large grows the type', large.font > medium.font, `${medium.font}px -> ${large.font}px`);
+// Growing the type alone would push values out of cells that had not grown to
+// take them, and a clipped number reads as a different number.
+check('large grows the boxes that hold it too',
+  large.row > medium.row && large.pane > medium.pane,
+  `row ${medium.row}->${large.row}, pane ${medium.pane}->${large.pane}`);
+check('large keeps every day tappable', (await rowState(1)).cells.length === 7);
+check('large still fits the longest day label', await page.evaluate(() =>
   [...document.querySelectorAll('.dlabel')].every((e) => e.scrollWidth <= e.clientWidth)));
-// The reason the days scroll instead of sharing the width: a cell has to hold
-// its real formatting rather than an abbreviation of it.
-check('a cell still fits its longest value', await page.evaluate(() =>
-  [...document.querySelectorAll('[data-cell]')].every((e) => e.scrollWidth <= e.clientWidth)));
-await page.screenshot({ path: `${SP}/shot-compact.png` });
+await page.screenshot({ path: `${SP}/shot-large.png` });
 
 await page.reload({ waitUntil: 'networkidle0' });
 await page.waitForSelector('.hrow');
-check('compact survives a reload', (await rowHeight()) === compact);
+check('the size survives a reload', (await cellFont()) === large.font);
+
 await page.click('#open-settings');
 await page.waitForSelector('#settings-dialog[open]');
-await page.click('#density input[value=comfortable]');
+await page.click('#text-size input[value=s]');
+await page.waitForFunction(() => document.querySelector('#grid').classList.contains('size-s'));
 await closeSheet('#settings-dialog');
-check('comfortable restores the row', (await rowHeight()) === comfortable);
+const small = { font: await cellFont(), row: await rowHeight() };
+check('small shrinks both', small.font < medium.font && small.row < medium.row,
+  `${medium.font}px/${medium.row}px -> ${small.font}px/${small.row}px`);
+
+await page.click('#open-settings');
+await page.waitForSelector('#settings-dialog[open]');
+await page.click('#text-size input[value=m]');
+await closeSheet('#settings-dialog');
+check('medium comes back to where it started', (await cellFont()) === medium.font);
 
 /* ---------- deleting, and persistence ---------- */
 
