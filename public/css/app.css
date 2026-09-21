@@ -371,8 +371,33 @@ body {
 }
 .grid.list .hrow:last-child { border-bottom: 0; }
 
-/* The days have no header to sit under. */
-.grid.list .dayhead { display: none; }
+/* Six of the seven days are gone, but the one that is left still has to say
+   which day it is — the grid labels every column and the list would otherwise
+   label none. The corner keeps its job too: it is where the way back from an
+   earlier week lives, and hiding the whole header took that with it. */
+.grid.list .dayhead {
+  width: auto;
+  height: auto;
+  margin-bottom: 0;
+  padding: 0 12px 6px 0;
+  gap: 10px;
+}
+.grid.list .dayhead-corner {
+  position: static;
+  flex: 1 1 auto;
+  padding: 0 0 0 12px;
+}
+.grid.list .dlabel { display: none; }
+/* One label with a whole row to itself reads better across than stacked. */
+.grid.list .dlabel.today {
+  display: flex;
+  flex: 0 0 var(--cellw);
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  height: auto;
+}
 
 /* Nothing scrolls, so nothing has to stick. The head takes the width the seven
    cells used to. */

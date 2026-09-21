@@ -22,7 +22,36 @@ const browser = await puppeteer.launch({
   userDataDir: `${SP}/chrome-profile`,
   args: ['--no-sandbox'],
 });
+// The suite logs into several different days of the current week, and the
+// yes/no section needs five of them — but days that have not happened yet are
+// deliberately inert, so on a Monday only one day is loggable and most of this
+// cannot run at all. Left alone the suite quietly only passes Friday to Sunday.
+//
+// So the page's clock is shifted by a whole number of days until "today" is a
+// Saturday: six loggable days behind it, and a today still in progress for the
+// stopwatch. Shifting rather than freezing keeps elapsed time real, and whole
+// days keep the calendar coherent — only which day we stand on changes.
+const DAY_MS = 86400000;
+const WEEK_START = 1; // the app's default, Monday
+const CLOCK_SHIFT = (5 - ((new Date().getDay() - WEEK_START + 7) % 7)) * DAY_MS;
+
+const pinClock = (tab) => tab.evaluateOnNewDocument((shift) => {
+  if (!shift) return;
+  const Real = Date;
+  class Shifted extends Real {
+    constructor(...args) {
+      // Only "now" moves; an explicit timestamp is already absolute. Statics
+      // like parse and UTC come along through the prototype chain.
+      if (args.length === 0) super(Real.now() + shift);
+      else super(...args);
+    }
+    static now() { return Real.now() + shift; }
+  }
+  window.Date = Shifted;
+}, CLOCK_SHIFT);
+
 const page = await browser.newPage();
+await pinClock(page);
 // Wide enough for the grid layout; the portrait list gets its own section.
 await page.setViewport({ width: 844, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 
@@ -209,21 +238,34 @@ const portrait = () => page.evaluate(() => {
   const shown = (e) => e !== null && getComputedStyle(e).display !== 'none';
   const row = document.querySelector('.hrow');
   const grid = document.querySelector('#grid');
+  const label = document.querySelector('.dlabel.today');
+  const cell = row.querySelector('.cell.today');
+  const box = (e) => e.getBoundingClientRect();
   return {
-    dayhead: shown(document.querySelector('.dayhead')),
+    labels: [...document.querySelectorAll('.dlabel')].filter(shown).length,
+    label: label && shown(label) ? label.textContent : null,
+    labelOverCell: label && cell
+      ? Math.abs(box(label).left - box(cell).left) < 1
+        && Math.abs(box(label).right - box(cell).right) < 1
+      : null,
+    todayChip: shown(document.querySelector('[data-today]')),
     cells: [...row.querySelectorAll('[data-cell]')].filter(shown).length,
-    today: shown(row.querySelector('.cell.today')),
+    today: shown(cell),
     used: row.querySelector('[data-used]').textContent,
     usedShown: shown(row.querySelector('[data-used]')),
     scrolls: grid.scrollWidth > grid.clientWidth + 1,
-    clipped: [...document.querySelectorAll('.hrow-name, .hrow-left, .hrow-used')]
+    clipped: [...document.querySelectorAll('.hrow-name, .hrow-left, .hrow-used, .dlabel')]
       .filter((e) => shown(e) && e.scrollWidth > e.clientWidth).map((e) => e.textContent),
   };
 });
 const p0 = await portrait();
-check('portrait drops the day header', !p0.dayhead);
-check('portrait keeps exactly one day, and it is today', p0.cells === 1 && p0.today,
+check('the list keeps exactly one day, and it is today', p0.cells === 1 && p0.today,
   `${p0.cells} cells, today=${p0.today}`);
+// The grid labels every column; the list would otherwise label none, leaving
+// the one number on the row without a day to belong to.
+check('the list names the day over the value column',
+  p0.labels === 1 && p0.label !== null, `${p0.labels} labels: ${p0.label}`);
+check('and the date sits squarely over the cell', p0.labelOverCell === true);
 check('portrait spells the budget out', p0.usedShown && / of /.test(p0.used), p0.used);
 check('portrait never scrolls sideways', !p0.scrolls);
 check('nothing in a portrait row clips', p0.clipped.length === 0, JSON.stringify(p0.clipped));
@@ -239,13 +281,17 @@ await page.waitForSelector('#detail-dialog[open]');
 check('portrait still opens the habit from the name', true);
 await closeSheet('#detail-dialog');
 
-// An earlier week has no today, so it has no cell to offer either.
+// An earlier week has no today, so it has no cell and no date to offer — but
+// it does need the way back, which hiding the whole header used to take with it.
 await page.click('#week-prev');
 await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'Last week');
-check('an earlier week in portrait is the summary and nothing else',
-  (await portrait()).cells === 0, String((await portrait()).cells));
-await page.click('#week-next');
+const p1 = await portrait();
+check('an earlier week in the list is the summary and nothing else',
+  p1.cells === 0 && p1.label === null, `${p1.cells} cells, label ${p1.label}`);
+check('and the list still offers the way back', p1.todayChip);
+await page.click('[data-today]');
 await page.waitForFunction(() => document.querySelector('#week-title').textContent === 'This week');
+check('the chip returns to this week from the list', true);
 
 await page.screenshot({ path: `${SP}/shot-portrait.png` });
 await page.setViewport({ width: 844, height: 760, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -649,6 +695,7 @@ check('deletes a habit', (await rowNames()).join(',') === 'Takeaway,Reading', JS
 await page.evaluate(() => new Promise((r) => setTimeout(r, 400)));
 await page.close();
 const page2 = await browser.newPage();
+await pinClock(page2);
 await page2.setViewport({ width: 844, height: 760, deviceScaleFactor: 2, isMobile: true });
 page2.on('pageerror', (e) => errors.push('pageerror(2): ' + e.message));
 page2.on('console', (m) => m.type() === 'error' && errors.push('console(2): ' + m.text()));

@@ -67,8 +67,12 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   has already said.
 - **Too narrow for a pane and seven days and the days go, and the summary
   stays** — except today's cell, which stays too, because logging today must not
-  require turning the phone. An earlier week has no today, so in the list it is
-  the summary and nothing else; the days are one rotation away.
+  require turning the phone. That cell keeps its date above it: the grid labels
+  every column, and a list that labelled none would leave the one number on the
+  row with no day to belong to. The header earns its place twice over, because
+  it is also where the `Today` chip lives — hiding it outright left an earlier
+  week with no way back but `›`. An earlier week has no today, so it shows
+  neither cell nor date, only the chip; the days are one rotation away.
 - **Wherever the grid shows, it shows the whole week.** The cells grow to fill
   whatever is left rather than leaving a gap at the right, so **the grid never
   scrolls sideways** — which is why there is no scroll-to-today machinery in
@@ -234,12 +238,20 @@ tools/e2e.mjs      browser test suite
 
 ```bash
 npm start          # in one terminal
+                   # The page's clock is shifted by whole days so "today" is
+                   # always a Saturday. Days that have not happened are inert,
+                   # so on a Monday only one day of the week is loggable and the
+                   # yes/no section — which needs five — cannot run; left alone
+                   # the suite quietly only passes Friday to Sunday. Shifting
+                   # rather than freezing keeps elapsed time real for the
+                   # stopwatch.
 node tools/e2e.mjs # drives real Chrome: budgets for all three kinds, logging
                    # into any day of the week (including an earlier one), daily
                    # limits colouring the day and not the week, the name and
                    # balance leading every row, the whole week fitting without
                    # sideways scrolling at five widths from 660 to 1024, the
-                   # list keeping only today and still logging into it, all
+                   # list keeping only today, dating it and still logging into
+                   # it, all
                    # three text sizes fitting a week at their own threshold and
                    # falling to the list a pixel below it, that a cell never has
                    # to clip its own value, timer persistence,
