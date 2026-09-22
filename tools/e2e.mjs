@@ -206,8 +206,13 @@ for (const size of ['s', 'm', 'l']) {
       const grid = document.querySelector('#grid');
       return grid.scrollWidth <= grid.clientWidth + 1;
     }));
-    check(`size ${size}: nothing clips at ${width}px`, await page.evaluate(() =>
-      [...document.querySelectorAll('.hrow-name, .hrow-left, [data-cell]')]
+    // A cell must never clip and neither must a day label: half a number reads
+    // as a different number, and formatCell() is there to shorten the few
+    // values that would. The name and the balance are the ones allowed to lose
+    // their tails — which is what pays for the type being this size at all,
+    // since the pane and the seven cells share one fixed width.
+    check(`size ${size}: no cell or date clips at ${width}px`, await page.evaluate(() =>
+      [...document.querySelectorAll('[data-cell], .dlabel')]
         .filter((e) => getComputedStyle(e).display !== 'none')
         .every((e) => e.scrollWidth <= e.clientWidth)));
   }
@@ -268,7 +273,9 @@ check('the list names the day over the value column',
 check('and the date sits squarely over the cell', p0.labelOverCell === true);
 check('portrait spells the budget out', p0.usedShown && / of /.test(p0.used), p0.used);
 check('portrait never scrolls sideways', !p0.scrolls);
-check('nothing in a portrait row clips', p0.clipped.length === 0, JSON.stringify(p0.clipped));
+// The list gives the balance its natural width instead of --balw, so the
+// clipping the grid trades away to pay for its type does not happen here.
+check('nothing in a list row clips', p0.clipped.length === 0, JSON.stringify(p0.clipped));
 
 // Both gestures survive the layout change: the name is still the habit, the
 // cell is still the log.

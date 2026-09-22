@@ -442,58 +442,66 @@ body {
    Each step therefore needs a different amount of room for the whole week —
    `--fits` records it, and applyLayout() reads it to decide between the grid
    and the list. Keep the three in step: --headw + 7x--cellw + 6x--cellgap + 12
-   is the content width, and --fits is the next round number above it. */
+   is the content width, and --fits is the next round number above it.
+
+   The pane is deliberately lean. A phone on its side is 844px and that is the
+   hard ceiling on the largest step, so every pixel the name and the balance
+   give up is a pixel the seven cells can spend on type. The balance clips
+   sooner for it — but the number leads and the word trails, so what goes is
+   "left" or "over", which the colour has already said. A cell must never clip,
+   because half a number reads as a different number; formatCell() shortens the
+   few values that would. */
 
 .grid.size-s {
-  --fits: 600px;    /* content 590: 204 + 7x50 + 6x4 + 12 */
-  --headw: 204px;
-  --balw: 86px;
-  --cellw: 50px;
-  --rowh: 44px;
-  --cellh: 44px;
-  --headh: 30px;
-  --cellgap: 4px;
-}
-.grid.size-s .hrow-name { font-size: 13px; }
-.grid.size-s .hrow-left { font-size: 11px; }
-.grid.size-s .hrow-used { font-size: 11px; }
-.grid.size-s .cell { font-size: 11px; border-radius: 10px; }
-.grid.size-s .dlabel .dow { font-size: 10px; }
-.grid.size-s .dlabel .dom { font-size: 10px; }
-
-.grid.size-m {
-  --fits: 720px;    /* content 714: 252 + 7x60 + 6x5 + 12 */
-  --headw: 252px;
-  --balw: 106px;
+  --fits: 660px;    /* content 652: 196 + 7x60 + 6x4 + 12 — an SE on its side */
+  --headw: 196px;
+  --balw: 82px;
   --cellw: 60px;
   --rowh: 52px;
   --cellh: 52px;
-  --headh: 36px;
+  --headh: 34px;
+  --cellgap: 4px;
+}
+.grid.size-s .hrow-name { font-size: 15px; }
+.grid.size-s .hrow-left { font-size: 13px; }
+.grid.size-s .hrow-used { font-size: 12px; }
+.grid.size-s .cell { font-size: 13px; border-radius: 10px; }
+.grid.size-s .dlabel .dow { font-size: 11px; }
+.grid.size-s .dlabel .dom { font-size: 11px; }
+
+.grid.size-m {
+  --fits: 770px;    /* content 766: 220 + 7x72 + 6x5 + 12 */
+  --headw: 220px;
+  --balw: 92px;
+  --cellw: 72px;
+  --rowh: 60px;
+  --cellh: 60px;
+  --headh: 40px;
   --cellgap: 5px;
 }
-.grid.size-m .hrow-name { font-size: 14px; }
-.grid.size-m .hrow-left { font-size: 13px; }
-.grid.size-m .hrow-used { font-size: 12px; }
-.grid.size-m .cell { font-size: 13px; }
+.grid.size-m .hrow-name { font-size: 17px; }
+.grid.size-m .hrow-left { font-size: 15px; }
+.grid.size-m .hrow-used { font-size: 13px; }
+.grid.size-m .cell { font-size: 16px; }
 .grid.size-m .dlabel .dow { font-size: 12px; }
-.grid.size-m .dlabel .dom { font-size: 11px; }
+.grid.size-m .dlabel .dom { font-size: 12px; }
 
 .grid.size-l {
-  --fits: 810px;    /* content 802: 284 + 7x68 + 6x5 + 12 */
-  --headw: 284px;
-  --balw: 118px;
-  --cellw: 68px;
-  --rowh: 62px;
-  --cellh: 62px;
-  --headh: 42px;
+  --fits: 840px;    /* content 828: 226 + 7x80 + 6x5 + 12 — 844 is the ceiling */
+  --headw: 226px;
+  --balw: 98px;
+  --cellw: 80px;
+  --rowh: 68px;
+  --cellh: 68px;
+  --headh: 44px;
   --cellgap: 5px;
 }
-.grid.size-l .hrow-name { font-size: 16px; }
-.grid.size-l .hrow-left { font-size: 15px; }
-.grid.size-l .hrow-used { font-size: 13px; }
-.grid.size-l .cell { font-size: 15px; border-radius: 14px; }
+.grid.size-l .hrow-name { font-size: 19px; }
+.grid.size-l .hrow-left { font-size: 17px; }
+.grid.size-l .hrow-used { font-size: 14px; }
+.grid.size-l .cell { font-size: 18px; border-radius: 14px; }
 .grid.size-l .dlabel .dow { font-size: 13px; }
-.grid.size-l .dlabel .dom { font-size: 12px; }
+.grid.size-l .dlabel .dom { font-size: 13px; }
 
 /* ---------- buttons ---------- */
 

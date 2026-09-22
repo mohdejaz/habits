@@ -165,10 +165,19 @@ directory, so Netlify, Cloudflare Pages, or a folder on your own server work the
   reads as a different number.
 
   A bigger step therefore needs a wider screen before the whole week will fit,
-  and that threshold is the setting's real consequence: **600px for small,
-  720px for medium, 810px for large.** Below it you get the list. So an iPhone
+  and that threshold is the setting's real consequence: **660px for small,
+  770px for medium, 840px for large.** Below it you get the list. So an iPhone
   SE on its side shows the week at small and the list at medium; a regular phone
-  shows it at every size. Each size declares its own threshold in `--fits`, and
+  shows it at every size, and 844px — a phone turned sideways — is the hard
+  ceiling that caps the largest step.
+
+  That ceiling is why the pane is lean. The pane and the seven cells share one
+  fixed width, so every pixel the name and the balance give up is a pixel the
+  cells can spend on type. The balance clips sooner for it — `1h 42m over` loses
+  its tail at large — and that is the right thing to spend: the number leads and
+  the word trails, and "over" is already in the colour. **A cell must never
+  clip**, because half a number reads as a different number; that is what
+  `formatCell()` is for, and what the suite asserts at every size. Each size declares its own threshold in `--fits`, and
   `applyLayout()` reads that to choose the layout — a media query cannot read a
   custom property, and this is the one layout decision the stylesheet cannot
   make on its own. The three numbers must stay in step with the boxes:
